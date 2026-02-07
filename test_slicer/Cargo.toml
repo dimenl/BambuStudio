@@ -1,0 +1,7 @@
+[package]
+name = "test-slicer-a1"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bambu-slicer = { path = "../rust_bindings/rust/bambu-slicer" }

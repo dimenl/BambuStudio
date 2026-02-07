@@ -1,0 +1,20 @@
+[package]
+name = "slicer-service"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bambu-slicer = { path = "../rust_bindings/rust/bambu-slicer" }
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+tempfile = "3.8"
+bytes = "1.5"
+mime = "0.3"
+base64 = "0.22"

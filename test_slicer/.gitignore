@@ -1,0 +1,5 @@
+/target
+/output/*.gcode
+Cargo.lock
+*.swp
+.DS_Store

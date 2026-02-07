@@ -483,9 +483,23 @@ if (APPLE)
         )
 endif ()
 
-add_library(libslic3r STATIC ${lisbslic3r_sources}
+# Optional: Include Rust C API bindings if enabled
+# This allows building without the bindings by default to avoid conflicts
+option(BUILD_RUST_BINDINGS "Build C API for Rust bindings" OFF)
+set(rust_c_api_sources "")
+if (BUILD_RUST_BINDINGS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../rust_bindings/c_api/slicer_c_api.cpp")
+    set(rust_c_api_sources
+        ../../rust_bindings/c_api/slicer_c_api.cpp
+        ../../rust_bindings/c_api/slicer_c_api.h
+    )
+    message(STATUS "Including Rust C API bindings")
+endif()
+
+
+add_library(libslic3r STATIC ${lisbslic3r_sources} ${rust_c_api_sources}
     "${CMAKE_CURRENT_BINARY_DIR}/libslic3r_version.h"
     ${OpenVDBUtils_SOURCES})
+# Only apply source_group to files under CMAKE_CURRENT_SOURCE_DIR
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${lisbslic3r_sources})
 
 if (SLIC3R_STATIC)
