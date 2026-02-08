@@ -249,47 +249,79 @@ int slicer_load_preset(
                  set_resources_dir("/app/resources");
             }
             
+            // Set data directory if not set (needed for PresetBundle to find "system" folder)
+            if (data_dir().empty()) {
+                 set_data_dir("/app/resources");
+            }
+            
             ctx->preset_bundle = std::make_unique<PresetBundle>();
+            std::cerr << "SlicerCAPI: Loading presets into PresetBundle..." << std::endl;
             ctx->preset_bundle->load_presets(*ctx->app_config, ForwardCompatibilitySubstitutionRule::EnableSystemSilent);
+            std::cerr << "SlicerCAPI: Presets loaded into PresetBundle." << std::endl;
             
             ctx->presets_loaded = true;
         }
         
         // Select Printer
         if (printer && *printer) {
-            if (!ctx->preset_bundle->printers.find_preset(printer, false)) {
-                ctx->set_error(std::string("Printer preset not found: ") + printer);
+            std::string printer_name(printer);
+            std::cerr << "SlicerCAPI: Attempting to load printer preset: " << printer_name << std::endl;
+            if (!ctx->preset_bundle->printers.find_preset(printer_name, false)) {
+                std::cerr << "SlicerCAPI: Printer preset NOT found: " << printer_name << std::endl;
+                ctx->set_error(std::string("Printer preset not found: ") + printer_name);
                 return SLICER_ERROR_PRESET_NOT_FOUND;
             }
-            ctx->preset_bundle->printers.select_preset_by_name(printer, true);
+            ctx->preset_bundle->printers.select_preset_by_name(printer_name, true);
+            
+            // Apply to context config
+            ctx->config.apply(ctx->preset_bundle->printers.get_selected_preset().config);
+            std::cerr << "SlicerCAPI: Printer preset selected and applied: " << printer_name << std::endl;
+            
+            // Check printable_area immediately (BambuStudio uses printable_area, not bed_shape)
+            if (ctx->config.has("printable_area")) {
+                 std::cerr << "SlicerCAPI: printable_area is present in loaded config." << std::endl;
+            } else {
+                 std::cerr << "SlicerCAPI: WARNING: printable_area is MISSING in loaded config!" << std::endl;
+            }
         }
 
         // Select Filament
         if (filament && *filament) {
-            if (!ctx->preset_bundle->filaments.find_preset(filament, false)) {
-                ctx->set_error(std::string("Filament preset not found: ") + filament);
+            std::string filament_name(filament);
+            std::cerr << "SlicerCAPI: Attempting to load filament preset: " << filament_name << std::endl;
+            if (!ctx->preset_bundle->filaments.find_preset(filament_name, false)) {
+                std::cerr << "SlicerCAPI: Filament preset NOT found: " << filament_name << std::endl;
+                ctx->set_error(std::string("Filament preset not found: ") + filament_name);
                 return SLICER_ERROR_PRESET_NOT_FOUND;
             }
-            ctx->preset_bundle->filaments.select_preset_by_name(filament, true);
+            ctx->preset_bundle->filaments.select_preset_by_name(filament_name, true);
+            std::cerr << "SlicerCAPI: Filament preset selected: " << filament_name << std::endl;
         }
 
         // Select Process
         if (process && *process) {
-            if (!ctx->preset_bundle->prints.find_preset(process, false)) {
-                ctx->set_error(std::string("Process preset not found: ") + process);
+            std::string process_name(process);
+            std::cerr << "SlicerCAPI: Attempting to load process preset: " << process_name << std::endl;
+            if (!ctx->preset_bundle->prints.find_preset(process_name, false)) {
+                std::cerr << "SlicerCAPI: Process preset NOT found: " << process_name << std::endl;
+                ctx->set_error(std::string("Process preset not found: ") + process_name);
                 return SLICER_ERROR_PRESET_NOT_FOUND;
             }
-            ctx->preset_bundle->prints.select_preset_by_name(process, true);
+            ctx->preset_bundle->prints.select_preset_by_name(process_name, true);
+            std::cerr << "SlicerCAPI: Process preset selected: " << process_name << std::endl;
         }
 
         // Apply config to context
         ctx->config = ctx->preset_bundle->full_config();
+        std::cerr << "SlicerCAPI: Full config applied from preset bundle." << std::endl;
         
         ctx->config_loaded = true;
         ctx->processed = false; // Invalidate previous processing
+        std::cerr << "SlicerCAPI: slicer_load_preset finished successfully." << std::endl;
         return SLICER_SUCCESS;
         
     } catch (const std::exception& e) {
+        std::cerr << "SlicerCAPI: Exception loading preset: " << e.what() << std::endl;
         ctx->set_error(std::string("Exception loading preset: ") + e.what());
         return SLICER_ERROR_PRESET_NOT_FOUND;
     }
@@ -351,19 +383,81 @@ int slicer_process(SlicerContext* ctx) {
     
     try {
         // Apply model to print
+        std::cerr << "SlicerCAPI: Preparing to apply model to print..." << std::endl;
+
+        if (!ctx->model) {
+            std::cerr << "SlicerCAPI: ERROR - ctx->model is NULL!" << std::endl;
+             return SLICER_ERROR_PROCESS_FAILED;
+        }
+
+        std::cerr << "SlicerCAPI: Creating Print object..." << std::endl;
         ctx->print = std::make_unique<Print>();
+        
+        // Ensure objects are on the bed
+        std::cerr << "SlicerCAPI: Adding default instances..." << std::endl;
+        try {
+            ctx->model->add_default_instances();
+        } catch (const std::exception& e) {
+             std::cerr << "SlicerCAPI: Exception in add_default_instances: " << e.what() << std::endl;
+        } catch (...) {
+             std::cerr << "SlicerCAPI: Unknown exception in add_default_instances" << std::endl;
+        }
+        
+        // Center objects around bed center
+        // Center objects around bed center
+        std::cerr << "SlicerCAPI: Getting printable_area (bed_shape)..." << std::endl;
+        const ConfigOptionPoints* printable_area = ctx->config.opt<ConfigOptionPoints>("printable_area");
+        if (printable_area) {
+            std::cerr << "SlicerCAPI: printable_area found. Points: " << printable_area->values.size() << std::endl;
+            for(const auto& p : printable_area->values) {
+                std::cerr << "  Point: " << p(0) << ", " << p(1) << std::endl;
+            }
+            BoundingBoxf bed_bbox(printable_area->values);
+            std::cerr << "SlicerCAPI: Bed center: " << bed_bbox.center()(0) << ", " << bed_bbox.center()(1) << std::endl;
+            
+            std::cerr << "SlicerCAPI: Centering instances..." << std::endl;
+            try {
+                ctx->model->center_instances_around_point(bed_bbox.center());
+                
+                // Log new bounding box
+                BoundingBoxf new_bbox = ctx->model->bounding_box();
+                std::cerr << "SlicerCAPI: Model bounding box after centering:" << std::endl;
+                std::cerr << "  Min: " << new_bbox.min(0) << ", " << new_bbox.min(1) << ", " << new_bbox.min(2) << std::endl;
+                std::cerr << "  Max: " << new_bbox.max(0) << ", " << new_bbox.max(1) << ", " << new_bbox.max(2) << std::endl;
+                
+                // Log object/instance counts
+                std::cerr << "SlicerCAPI: Model stats:" << std::endl;
+                std::cerr << "  Objects: " << ctx->model->objects.size() << std::endl;
+                for (size_t i = 0; i < ctx->model->objects.size(); ++i) {
+                     std::cerr << "  Object " << i << " instances: " << ctx->model->objects[i]->instances.size() << std::endl;
+                }
+
+            } catch (const std::exception& e) {
+                 std::cerr << "SlicerCAPI: Exception in center_instances_around_point: " << e.what() << std::endl;
+            } catch (...) {
+                 std::cerr << "SlicerCAPI: Unknown exception in center_instances_around_point" << std::endl;
+            }
+        } else {
+            std::cerr << "SlicerCAPI: bed_shape NOT found in config!" << std::endl;
+        }
+
+        std::cerr << "SlicerCAPI: Applying model to print..." << std::endl;
         ctx->print->apply(*ctx->model, ctx->config);
         
         // Process the print
+        std::cerr << "SlicerCAPI: Processing print..." << std::endl;
         ctx->print->process();
         
         // Validate
+        std::cerr << "SlicerCAPI: Validating..." << std::endl;
         StringObjectException validation_result = ctx->print->validate();
         if (!validation_result.string.empty()) {
+            std::cerr << "SlicerCAPI: Validation failed: " << validation_result.string << std::endl;
             ctx->set_error("Print validation failed: " + validation_result.string);
             return SLICER_ERROR_PROCESS_FAILED;
         }
         
+        std::cerr << "SlicerCAPI: Processing complete." << std::endl;
         ctx->processed = true;
         return SLICER_SUCCESS;
         
@@ -374,27 +468,39 @@ int slicer_process(SlicerContext* ctx) {
 }
 
 int slicer_export_gcode(SlicerContext* ctx, const char* output_path) {
+    std::cerr << "SlicerCAPI: slicer_export_gcode called" << std::endl;
     int err = validate_context(ctx);
     if (err != SLICER_SUCCESS) return err;
     
     if (!ctx->processed) {
+        std::cerr << "SlicerCAPI: Model not processed yet" << std::endl;
         ctx->set_error("Model not processed yet");
         return SLICER_ERROR_PROCESS_FAILED;
     }
     
     if (!output_path) {
+        std::cerr << "SlicerCAPI: Output path is NULL" << std::endl;
         ctx->set_error("Output path is NULL");
         return SLICER_ERROR_NULL_PARAMETER;
     }
     
     try {
         std::string path_str(output_path);
+        std::cerr << "SlicerCAPI: Exporting G-code to: " << path_str << std::endl;
         
         // Export G-code
+        if (!ctx->print) {
+            std::cerr << "SlicerCAPI: ctx->print is null!" << std::endl;
+             return SLICER_ERROR_PROCESS_FAILED;
+        }
+
         GCodeProcessorResult* result = nullptr;
+        std::cerr << "SlicerCAPI: Calling print->export_gcode..." << std::endl;
         std::string exported_path = ctx->print->export_gcode(path_str, result);
+        std::cerr << "SlicerCAPI: Export completed. Path: " << exported_path << std::endl;
         
         if (exported_path.empty()) {
+            std::cerr << "SlicerCAPI: Failed to export G-code (empty path returned)" << std::endl;
             ctx->set_error("Failed to export G-code");
             return SLICER_ERROR_EXPORT_FAILED;
         }
@@ -402,6 +508,7 @@ int slicer_export_gcode(SlicerContext* ctx, const char* output_path) {
         return SLICER_SUCCESS;
         
     } catch (const std::exception& e) {
+        std::cerr << "SlicerCAPI: Exception during export: " << e.what() << std::endl;
         ctx->set_error(std::string("Exception during export: ") + e.what());
         return SLICER_ERROR_EXPORT_FAILED;
     }
@@ -419,19 +526,34 @@ int slicer_slice_and_export(SlicerContext* ctx, const char* output_path) {
  * ============================================================================ */
 
 const char* slicer_get_stats_json(SlicerContext* ctx) {
-    if (!ctx) return nullptr;
+    std::cerr << "SlicerCAPI: slicer_get_stats_json called" << std::endl;
+    if (!ctx) {
+        std::cerr << "SlicerCAPI: ctx is null" << std::endl;
+        return nullptr;
+    }
     
     if (!ctx->processed) {
+        std::cerr << "SlicerCAPI: Model not processed yet" << std::endl;
         ctx->set_error("Model not processed yet");
         return nullptr;
     }
     
     try {
+        std::cerr << "SlicerCAPI: Getting print statistics..." << std::endl;
+        // Check if print object exists
+        if (!ctx->print) {
+            std::cerr << "SlicerCAPI: ctx->print is null!" << std::endl;
+            return nullptr;
+        }
+
         const PrintStatistics& stats = ctx->print->print_statistics();
+        std::cerr << "SlicerCAPI: Stats retrieved. Generating JSON..." << std::endl;
         ctx->stats_json = generate_stats_json(stats);
+        std::cerr << "SlicerCAPI: JSON generated: " << ctx->stats_json.substr(0, 50) << "..." << std::endl;
         return ctx->stats_json.c_str();
         
     } catch (const std::exception& e) {
+        std::cerr << "SlicerCAPI: Exception getting statistics: " << e.what() << std::endl;
         ctx->set_error(std::string("Exception getting statistics: ") + e.what());
         return nullptr;
     }

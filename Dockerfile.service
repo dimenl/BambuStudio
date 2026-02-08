@@ -105,6 +105,12 @@ RUN useradd -m -u 1000 -s /bin/bash slicer && \
     mkdir -p /app /tmp/slicer && \
     chown -R slicer:slicer /app /tmp/slicer
 
+# Copy resources
+# Copy resources/profiles into /app/resources/system because PresetBundle expects system presets there
+COPY --chown=slicer:slicer resources/profiles /app/resources/system
+# Also copy other resources if needed, or link
+COPY --chown=slicer:slicer resources /app/resources
+
 # Copy ONLY the compiled service binary
 COPY --from=builder /BambuStudio/slicer_service/target/release/slicer-service /app/slicer-service
 RUN chmod +x /app/slicer-service

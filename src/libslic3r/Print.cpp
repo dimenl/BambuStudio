@@ -2277,9 +2277,17 @@ void Print::process(std::unordered_map<std::string, long long>* slice_time, bool
 // It is up to the caller to show an error message.
 std::string Print::export_gcode(const std::string& path_template, GCodeProcessorResult* result, ThumbnailsGeneratorCallback thumbnail_cb)
 {
+    std::cerr << "Print::export_gcode: Entered" << std::endl;
     // output everything to a G-code file
     // The following call may die if the filename_format template substitution fails.
+    std::cerr << "Print::export_gcode: Calling output_filepath with template: " << path_template << std::endl;
     std::string path = this->output_filepath(path_template);
+    std::cerr << "Print::export_gcode: output_filepath returned: " << path << std::endl;
+    
+    std::cerr << "Print::export_gcode: State check:" << std::endl;
+    std::cerr << "  m_objects.size(): " << this->m_objects.size() << std::endl;
+    std::cerr << "  m_print_regions.size(): " << this->m_print_regions.size() << std::endl;
+    
     std::string message;
     if (!path.empty() && result == nullptr) {
         // Only show the path if preview_data is not set -> running from command line.
@@ -2293,15 +2301,22 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
     // The following line may die for multiple reasons.
     GCode gcode;
     //BBS: compute plate offset for gcode-generator
+    std::cerr << "Print::export_gcode: Calling get_plate_origin" << std::endl;
     const Vec3d origin = this->get_plate_origin();
+    std::cerr << "Print::export_gcode: Plate origin: " << origin(0) << ", " << origin(1) << ", " << origin(2) << std::endl;
     gcode.set_gcode_offset(origin(0), origin(1));
+    
+    std::cerr << "Print::export_gcode: Calling gcode.do_export" << std::endl;
     gcode.do_export(this, path.c_str(), result, thumbnail_cb);
+    std::cerr << "Print::export_gcode: gcode.do_export returned" << std::endl;
+    
     gcode.export_layer_filaments(result);
     //BBS
     if (result != nullptr){
         result->conflict_result = m_conflict_result;
         result->nozzle_group_result = this->get_nozzle_group_result();
     }
+    std::cerr << "Print::export_gcode: Finished" << std::endl;
     return path.c_str();
 }
 
