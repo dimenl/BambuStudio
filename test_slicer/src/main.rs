@@ -41,7 +41,7 @@ fn main() {
 fn test_simple_api(model_path: &Path, output_path: &Path) {
     // A1 printer configuration
     let config = SlicerConfig {
-        printer_preset: Some("Bambu Lab A1".to_string()),
+        printer_preset: Some("Bambu Lab A1 0.4 nozzle".to_string()),
         filament_preset: Some("Bambu PLA Basic @BBL A1".to_string()),
         process_preset: Some("0.20mm Standard @BBL A1".to_string()),
         custom_config_json: None,
@@ -124,16 +124,11 @@ fn test_builder_api(model_path: &Path, output_path: &Path) {
 
     // Slice
     print!("\nSlicing... ");
-    let stats = match slicer.slice() {
-        Ok(s) => {
-            println!("✓");
-            s
-        }
-        Err(e) => {
-            eprintln!("✗ Failed: {}", e);
-            return;
-        }
-    };
+    if let Err(e) = slicer.slice() {
+        eprintln!("✗ Failed: {}", e);
+        return;
+    }
+    println!("✓");
 
     // Export
     print!("Exporting G-code... ");
@@ -142,6 +137,15 @@ fn test_builder_api(model_path: &Path, output_path: &Path) {
         return;
     }
     println!("✓");
+
+    // Get statistics
+    let stats = match slicer.get_stats() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("✗ Failed to get stats: {}", e);
+            return;
+        }
+    };
 
     println!("\n✓ Success!");
     print_stats(&stats);

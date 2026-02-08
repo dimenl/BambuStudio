@@ -212,11 +212,11 @@ impl Slicer {
         Ok(())
     }
 
-    /// Perform slicing and return statistics
+    /// Perform slicing
     ///
     /// This processes the model but doesn't export G-code yet.
     /// Call [`export_gcode`](Self::export_gcode) to write the G-code file.
-    pub fn slice(&mut self) -> Result<SlicerStats> {
+    pub fn slice(&mut self) -> Result<()> {
         let result = unsafe { ffi::slicer_process(self.ctx) };
 
         if result != SLICER_SUCCESS {
@@ -224,6 +224,13 @@ impl Slicer {
             return Err(SlicerError::from_code(result, error_msg));
         }
 
+        Ok(())
+    }
+
+    /// Retrieve statistics from the slicing/export process
+    ///
+    /// Should be called AFTER `export_gcode`.
+    pub fn get_stats(&self) -> Result<SlicerStats> {
         // Get statistics
         let stats_ptr = unsafe { ffi::slicer_get_stats_json(self.ctx) };
         if stats_ptr.is_null() {
@@ -331,10 +338,9 @@ pub fn slice_model(
         let _ = json;
     }
 
-    let stats = slicer.slice()?;
+    slicer.slice()?;
     slicer.export_gcode(output_path)?;
-
-    Ok(stats)
+    slicer.get_stats()
 }
 
 /// Get the API version

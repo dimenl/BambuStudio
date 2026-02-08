@@ -25,13 +25,13 @@ struct ErrorResponse {
 struct SliceRequest {
     /// Printer preset name (e.g., "Bambu Lab A1")
     printer_preset: Option<String>,
-    
+
     /// Filament preset name (e.g., "Bambu PLA Basic @BBL A1")
     filament_preset: Option<String>,
-    
+
     /// Process preset name (e.g., "0.20mm Standard @BBL A1")
     process_preset: Option<String>,
-    
+
     /// Custom parameters as key-value pairs
     custom_params: Option<Vec<(String, String)>>,
 }
@@ -41,10 +41,10 @@ struct SliceRequest {
 struct SliceResponse {
     /// Unique ID for this slicing job
     job_id: String,
-    
+
     /// Print statistics
     stats: SlicerStats,
-    
+
     /// Base64-encoded G-code content
     gcode: String,
 }
@@ -115,7 +115,7 @@ async fn health() -> Json<HealthResponse> {
 }
 
 /// Main slicing endpoint
-/// 
+///
 /// Accepts multipart form data with:
 /// - `model`: STL/3MF/AMF/OBJ file
 /// - `config`: JSON configuration (optional)
@@ -141,14 +141,18 @@ async fn slice(mut multipart: Multipart) -> Result<Json<SliceResponse>, AppError
                 // Get filename
                 let filename = field
                     .file_name()
-                    .ok_or_else(|| AppError::InvalidRequest("Model file must have a filename".to_string()))?
+                    .ok_or_else(|| {
+                        AppError::InvalidRequest("Model file must have a filename".to_string())
+                    })?
                     .to_string();
 
                 // Verify extension
                 let extension = Path::new(&filename)
                     .extension()
                     .and_then(|e| e.to_str())
-                    .ok_or_else(|| AppError::InvalidRequest("Invalid file extension".to_string()))?;
+                    .ok_or_else(|| {
+                        AppError::InvalidRequest("Invalid file extension".to_string())
+                    })?;
 
                 if !["stl", "3mf", "amf", "obj"].contains(&extension.to_lowercase().as_str()) {
                     return Err(AppError::InvalidRequest(
@@ -162,7 +166,7 @@ async fn slice(mut multipart: Multipart) -> Result<Json<SliceResponse>, AppError
                     .bytes()
                     .await
                     .map_err(|e| AppError::InvalidRequest(e.to_string()))?;
-                
+
                 std::fs::write(&file_path, data)?;
                 info!("Saved model file: {}", file_path.display());
                 model_path = Some(file_path);
@@ -172,11 +176,10 @@ async fn slice(mut multipart: Multipart) -> Result<Json<SliceResponse>, AppError
                     .text()
                     .await
                     .map_err(|e| AppError::InvalidRequest(e.to_string()))?;
-                
-                config = Some(
-                    serde_json::from_str(&data)
-                        .map_err(|e| AppError::InvalidRequest(format!("Invalid config JSON: {}", e)))?,
-                );
+
+                config = Some(serde_json::from_str(&data).map_err(|e| {
+                    AppError::InvalidRequest(format!("Invalid config JSON: {}", e))
+                })?);
                 info!("Loaded configuration");
             }
             _ => {
@@ -186,12 +189,12 @@ async fn slice(mut multipart: Multipart) -> Result<Json<SliceResponse>, AppError
     }
 
     // Verify model was provided
-    let model_path = model_path
-        .ok_or_else(|| AppError::InvalidRequest("No model file provided".to_string()))?;
+    let model_path =
+        model_path.ok_or_else(|| AppError::InvalidRequest("No model file provided".to_string()))?;
 
     // Use default A1 config if none provided
     let config = config.unwrap_or(SliceRequest {
-        printer_preset: Some("Bambu Lab A1".to_string()),
+        printer_preset: Some("Bambu Lab A1 0.4 nozzle".to_string()),
         filament_preset: Some("Bambu PLA Basic @BBL A1".to_string()),
         process_preset: Some("0.20mm Standard @BBL A1".to_string()),
         custom_params: None,
@@ -210,10 +213,9 @@ async fn slice(mut multipart: Multipart) -> Result<Json<SliceResponse>, AppError
     };
 
     info!("Slicing completed successfully");
-    info!("Stats: time={}, filament={:.2}mm, weight={:.2}g",
-        stats.estimated_print_time,
-        stats.total_used_filament,
-        stats.total_weight
+    info!(
+        "Stats: time={}, filament={:.2}mm, weight={:.2}g",
+        stats.estimated_print_time, stats.total_used_filament, stats.total_weight
     );
 
     // Read G-code and encode as base64
@@ -276,10 +278,13 @@ fn slice_with_custom_params(
     }
 
     // Slice
-    let stats = slicer.slice()?;
+    slicer.slice()?;
 
     // Export
     slicer.export_gcode(output_path)?;
+
+    // Get statistics (after export)
+    let stats = slicer.get_stats()?;
 
     Ok(stats)
 }
@@ -289,7 +294,10 @@ fn base64_encode(data: &[u8]) -> String {
     use std::io::Write;
     let mut output = Vec::new();
     {
-        let mut encoder = base64::write::EncoderWriter::new(&mut output, &base64::engine::general_purpose::STANDARD);
+        let mut encoder = base64::write::EncoderWriter::new(
+            &mut output,
+            &base64::engine::general_purpose::STANDARD,
+        );
         encoder.write_all(data).unwrap();
     }
     String::from_utf8(output).unwrap()
@@ -328,7 +336,5 @@ async fn main() {
     info!("  GET  /health - Health check");
     info!("  POST /slice  - Slice a model");
 
-    axum::serve(listener, app)
-        .await
-        .expect("Server failed");
+    axum::serve(listener, app).await.expect("Server failed");
 }

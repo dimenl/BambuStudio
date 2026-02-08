@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <cmath>
 
 // JSON library for statistics output
 #include <sstream>
@@ -104,6 +105,85 @@ static std::string generate_stats_json(const PrintStatistics& stats) {
         first = false;
     }
     
+    oss << "\n  }\n";
+    oss << "}";
+    
+    return oss.str();
+}
+
+static std::string generate_stats_json(const PrintEstimatedStatistics& stats, const PrintConfig& config) {
+    std::ostringstream oss;
+    oss << "{\n";
+
+    // Estimated time
+    double time_seconds = 0.0;
+    if (!stats.modes.empty()) {
+        time_seconds = stats.modes[0].time;
+    }
+    
+    // Format time: "1h 23m 45s"
+    int h = (int)(time_seconds / 3600);
+    int m = (int)((time_seconds - h * 3600) / 60);
+    int s = (int)(time_seconds - h * 3600 - m * 60);
+    
+    // Only show hours if > 0
+    oss << "  \"estimated_print_time\": \"";
+    if (h > 0) oss << h << "h ";
+    if (m > 0 || h > 0) oss << m << "m ";
+    oss << s << "s\",\n";
+
+    double total_vol = 0.0;      // volume in mm3
+    double total_weight = 0.0;   // weight in g
+    double total_cost = 0.0;     // cost
+    double total_filament_len = 0.0; // length in mm
+
+    // Calculate per-filament stats
+    std::map<size_t, double> filament_usage; // extruder_id -> length
+
+    for (const auto& [extruder_id, volume] : stats.total_volumes_per_extruder) {
+        total_vol += volume;
+
+        // Get filament properties for this extruder
+        double diameter = 1.75;
+        if (extruder_id < config.filament_diameter.values.size())
+            diameter = config.filament_diameter.values[extruder_id];
+
+        double density = 1.24; // Default PLA
+        if (extruder_id < config.filament_density.values.size())
+            density = config.filament_density.values[extruder_id];
+
+        double cost = 0.0;
+        if (extruder_id < config.filament_cost.values.size())
+            cost = config.filament_cost.values[extruder_id]; // cost per kg
+
+        double area = PI * (diameter / 2.0) * (diameter / 2.0);
+        double length = 0.0;
+        if (area > 0.0) length = volume / area;
+        
+        // Weight: volume(mm3) * density(g/cm3) / 1000
+        double weight = volume * density / 1000.0;
+
+        total_filament_len += length;
+        total_weight += weight;
+        total_cost += weight * cost / 1000.0; // cost is per kg
+
+        filament_usage[extruder_id] = length;
+    }
+
+    oss << "  \"total_used_filament\": " << total_filament_len << ",\n";
+    oss << "  \"total_extruded_volume\": " << total_vol << ",\n";
+    oss << "  \"total_weight\": " << total_weight << ",\n";
+    oss << "  \"total_cost\": " << total_cost << ",\n";
+    oss << "  \"total_toolchanges\": " << stats.total_extruder_changes << ",\n"; 
+    oss << "  \"filament_stats\": {\n";
+
+    bool first = true;
+    for (const auto& pair : filament_usage) {
+        if (!first) oss << ",\n";
+        oss << "    \"" << pair.first << "\": " << pair.second;
+        first = false;
+    }
+
     oss << "\n  }\n";
     oss << "}";
     
@@ -420,7 +500,7 @@ int slicer_process(SlicerContext* ctx) {
                 ctx->model->center_instances_around_point(bed_bbox.center());
                 
                 // Log new bounding box
-                BoundingBoxf new_bbox = ctx->model->bounding_box();
+                BoundingBoxf3 new_bbox = ctx->model->bounding_box();
                 std::cerr << "SlicerCAPI: Model bounding box after centering:" << std::endl;
                 std::cerr << "  Min: " << new_bbox.min(0) << ", " << new_bbox.min(1) << ", " << new_bbox.min(2) << std::endl;
                 std::cerr << "  Max: " << new_bbox.max(0) << ", " << new_bbox.max(1) << ", " << new_bbox.max(2) << std::endl;
@@ -494,10 +574,57 @@ int slicer_export_gcode(SlicerContext* ctx, const char* output_path) {
              return SLICER_ERROR_PROCESS_FAILED;
         }
 
-        GCodeProcessorResult* result = nullptr;
-        std::cerr << "SlicerCAPI: Calling print->export_gcode..." << std::endl;
-        std::string exported_path = ctx->print->export_gcode(path_str, result);
+        GCodeProcessorResult result; // Create on stack
+        std::cerr << "SlicerCAPI: Calling print->export_gcode with result object..." << std::endl;
+        std::string exported_path = ctx->print->export_gcode(path_str, &result);
         std::cerr << "SlicerCAPI: Export completed. Path: " << exported_path << std::endl;
+        
+        // Log stats from result
+        // Log stats from result
+        std::cerr << "SlicerCAPI: Export Stats:" << std::endl;
+        
+        // Debug Result
+        std::cerr << "SlicerCAPI: Result modes size: " << result.print_statistics.modes.size() << std::endl;
+        if (result.print_statistics.modes.size() > 0) {
+             std::cerr << "  Estimated time (Normal): " << result.print_statistics.modes[0].time << "s" << std::endl;
+        } else {
+             std::cerr << "  Estimated time: N/A (modes empty)" << std::endl;
+        }
+        
+        // Log filament usage per extruder
+        if (!result.print_statistics.total_volumes_per_extruder.empty()) {
+            for (const auto& [extruder_id, volume] : result.print_statistics.total_volumes_per_extruder) {
+                std::cerr << "  Filament used (extruder " << extruder_id << "): " << volume << " mm3" << std::endl;
+            }
+        } else {
+            std::cerr << "  Filament used: N/A (stats empty)" << std::endl;
+        }
+
+        // Cache stats JSON
+        std::cerr << "SlicerCAPI: Caching stats JSON from export result..." << std::endl;
+        ctx->stats_json = generate_stats_json(result.print_statistics, ctx->print->config());
+        std::cerr << "SlicerCAPI: Stats JSON cached." << std::endl;
+
+        // Debug Config Limits
+        if (ctx->print) {
+            const auto& conf = ctx->print->config();
+            // machine_max_acceleration_x is a ConfigOptionFloatsNullable
+            if (!conf.machine_max_acceleration_x.values.empty()) {
+                 std::cerr << "SlicerCAPI: machine_max_acceleration_x: " << conf.machine_max_acceleration_x.values[0] << std::endl;
+            } else {
+                 std::cerr << "SlicerCAPI: machine_max_acceleration_x is empty/not found" << std::endl;
+            }
+
+            // machine_max_speed_x is a ConfigOptionFloatsNullable
+            if (!conf.machine_max_speed_x.values.empty()) {
+                 std::cerr << "SlicerCAPI: machine_max_speed_x: " << conf.machine_max_speed_x.values[0] << std::endl;
+            } else {
+                 std::cerr << "SlicerCAPI: machine_max_speed_x is empty/not found" << std::endl;
+            }
+        }
+        
+        // Also try to get structured stats if possible, similar to get_stats_json but from result
+        // (For now just basic logging to confirm it works)
         
         if (exported_path.empty()) {
             std::cerr << "SlicerCAPI: Failed to export G-code (empty path returned)" << std::endl;
@@ -536,6 +663,12 @@ const char* slicer_get_stats_json(SlicerContext* ctx) {
         std::cerr << "SlicerCAPI: Model not processed yet" << std::endl;
         ctx->set_error("Model not processed yet");
         return nullptr;
+    }
+    
+    // Check for cached stats from export
+    if (!ctx->stats_json.empty()) {
+        std::cerr << "SlicerCAPI: Returning cached stats JSON from export." << std::endl;
+        return ctx->stats_json.c_str();
     }
     
     try {
