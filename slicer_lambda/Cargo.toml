@@ -1,0 +1,14 @@
+[package]
+name = "slicer_lambda"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aws-config = "1"
+aws-sdk-s3 = "1"
+bambu-slicer = { path = "../rust_bindings/rust/bambu-slicer" }
+lambda_runtime = "1.0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.8"
+tokio = { version = "1", features = ["full"] }

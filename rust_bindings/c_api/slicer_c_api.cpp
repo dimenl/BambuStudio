@@ -423,13 +423,17 @@ int slicer_load_preset(
             // Set resources directory if not set (important for Docker)
             if (resources_dir().empty()) {
                 // Check if /app/resources exists
-                 // For now, hardcode to typical docker location or expect environment
-                 set_resources_dir("/app/resources");
+                // For now, hardcode to typical docker location or expect environment
+                // TODO: Add a fix to work both on lambda and service api
+                //  set_resources_dir("/app/resources");
+                set_resources_dir("/tmp/resources");
             }
             
             // Set data directory if not set (needed for PresetBundle to find "system" folder)
             if (data_dir().empty()) {
-                 set_data_dir("/app/resources");
+                // set_data_dir("/app/resources");
+                // TODO: Add a fix to work both on lambda and service api
+                set_data_dir("/tmp/resources");
             }
             
             ctx->preset_bundle = std::make_unique<PresetBundle>();

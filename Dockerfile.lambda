@@ -1,17 +1,14 @@
-# Multi-stage Dockerfile for BambuSlicer HTTP Service
-# Uses BuildLinux.sh for reliable dependency management
-# Produces minimal runtime image (~500MB vs 4GB+ build image)
+# Multi-stage Dockerfile for BambuSlicer Lambda
+# Builds libslic3r + Rust lambda and produces a slim runtime image
 
 FROM debian:bookworm-slim AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV container=docker
 
-# Copy source
 WORKDIR /BambuStudio
 COPY . /BambuStudio/
 
-# Install system dependencies (from linux.d/debian)
 RUN apt-get update && apt-get install -y \
     autoconf build-essential cmake curl extra-cmake-modules file git ninja-build \
     binutils-gold \
@@ -25,19 +22,13 @@ RUN apt-get update && apt-get install -y \
     libclang-dev llvm-dev clang \
     && rm -rf /var/lib/apt/lists/*
 
-# Set LIBCLANG_PATH for bindgen (Debian bookworm uses LLVM 14)
 ENV LIBCLANG_PATH="/usr/lib/llvm-14/lib"
 
-# Install Rust (needed for service) - AFTER curl is available
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Build dependencies (skip RAM check, limit to 1 core to reduce memory)
-# Only build essential deps, skip GUI-related dependencies
 RUN ./BuildLinux.sh -d -r -1
 
-# Build ONLY libslic3r (not the full BambuStudio GUI)
-# This dramatically reduces build time and memory usage
 ENV CMAKE_BUILD_PARALLEL_LEVEL=2
 RUN mkdir -p build_rust && cd build_rust && \
     cmake .. \
@@ -50,34 +41,22 @@ RUN mkdir -p build_rust && cd build_rust && \
         -DSLIC3R_PCH=OFF \
         -DSLIC3R_PERL_XS=OFF \
         -DCMAKE_CXX_FLAGS="-fuse-ld=gold" && \
-    echo "Building ONLY libslic3r target (not full BambuStudio)..." && \
-    cmake --build . --target libslic3r -j2 && \
-    echo "libslic3r build complete!"
+    cmake --build . --target libslic3r -j2
 
-# Build Rust service
 ENV BAMBU_BUILD_DIR=/BambuStudio/build_rust
-ENV PATH="/root/.cargo/bin:${PATH}"
-WORKDIR /BambuStudio/slicer_service
-
-# Keep container alive for debugging
-# CMD ["tail", "-f", "/dev/null"]
+WORKDIR /BambuStudio/slicer_lambda
 
 RUN cargo build --release
-# Strip symbols to reduce binary size
-RUN strip target/release/slicer-service
-# Verify binary was built
-RUN ls -lh target/release/slicer-service && \
-    file target/release/slicer-service
+RUN strip target/release/slicer_lambda
 
 # ============================================
-# Runtime stage - MINIMAL IMAGE
+# Runtime stage
 # ============================================
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # curl \
     libstdc++6 \
     zlib1g \
     libfontconfig1 \
@@ -89,32 +68,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/share/doc /usr/share/man /usr/share/locale
 
-# Create non-root user
 RUN useradd -m -u 1000 -s /bin/bash slicer && \
     mkdir -p /app /tmp/slicer && \
     chown -R slicer:slicer /app /tmp/slicer
 
-# Copy resources
-# Copy resources/profiles into /app/resources/system because PresetBundle expects system presets there
 COPY --chown=slicer:slicer resources/profiles /app/resources/system
 COPY --chown=slicer:slicer resources/printers /app/resources/printers
 COPY --chown=slicer:slicer resources/info /app/resources/info
 COPY --chown=slicer:slicer resources/cert /app/resources/cert
 
-# Copy ONLY the compiled service binary
-COPY --from=builder /BambuStudio/slicer_service/target/release/slicer-service /app/slicer-service
-RUN chmod +x /app/slicer-service
+COPY --from=builder /BambuStudio/slicer_lambda/target/release/slicer_lambda /app/slicer_lambda
+RUN chmod +x /app/slicer_lambda
 
-# Switch to non-root user
 USER slicer
 WORKDIR /app
 
-# Expose service port
-EXPOSE 8080
-
-# # Health check
-# HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-#     CMD curl -f http://localhost:8080/health || exit 1
-
-# Run service
-CMD ["/app/slicer-service"]
+ENTRYPOINT ["/app/slicer_lambda"]

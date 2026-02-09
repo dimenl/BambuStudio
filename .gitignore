@@ -34,3 +34,4 @@ test.js
 *.gcode
 Cargo.lock
 base64_input.txt
+notes.txt

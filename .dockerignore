@@ -26,3 +26,6 @@ SVG
 Dockerfile
 DockerBuild.sh
 DockerRun.sh
+resources/printers/**/*.stl
+resources/printers/**/*.png
+resources/printers/**/*.svg
