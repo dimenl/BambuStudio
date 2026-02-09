@@ -64,6 +64,7 @@ mod ffi;
 pub use error::{Result, SlicerError};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::ptr;
@@ -111,6 +112,10 @@ pub struct SlicerStats {
     /// Per-filament statistics (filament ID -> usage in mm)
     #[serde(default)]
     pub filament_stats: std::collections::HashMap<usize, f64>,
+
+    /// Additional statistics (e.g., prepare time, timelapse time, breakdowns)
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, Value>,
 }
 
 /// Main slicer context - Builder API

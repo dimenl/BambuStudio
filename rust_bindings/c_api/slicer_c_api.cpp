@@ -124,39 +124,90 @@ static std::string generate_stats_json(const PrintStatistics& stats) {
     return oss.str();
 }
 
-static std::string generate_stats_json(const PrintEstimatedStatistics& stats, const PrintConfig& config) {
-    std::ostringstream oss;
-    oss << "{\n";
+static std::string generate_stats_json(
+    const PrintEstimatedStatistics& stats,
+    const PrintConfig& config,
+    double timelapse_time_seconds,
+    double initial_layer_time_seconds
+) {
+    json j;
 
-    // Estimated time
-    double time_seconds = 0.0;
-    if (!stats.modes.empty()) {
-        time_seconds = stats.modes[0].time;
+    auto length_from_volume = [](double volume_mm3, double diameter) {
+        double area = PI * (diameter / 2.0) * (diameter / 2.0);
+        return area > 0.0 ? (volume_mm3 / area) : 0.0;
+    };
+
+    auto volume_map_to_json = [](const std::map<size_t, double>& volumes) {
+        json out = json::object();
+        for (const auto& [extruder_id, volume] : volumes) {
+            out[std::to_string(extruder_id)] = volume;
+        }
+        return out;
+    };
+
+    auto length_map_to_json = [&](const std::map<size_t, double>& volumes) {
+        json out = json::object();
+        for (const auto& [extruder_id, volume] : volumes) {
+            double diameter = 1.75;
+            if (extruder_id < config.filament_diameter.values.size())
+                diameter = config.filament_diameter.values[extruder_id];
+            out[std::to_string(extruder_id)] = length_from_volume(volume, diameter);
+        }
+        return out;
+    };
+
+    const auto& normal = stats.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)];
+    const auto& stealth = stats.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)];
+
+    double normal_model_time = std::max(0.0, (double)normal.time - (double)normal.prepare_time - timelapse_time_seconds);
+    double stealth_model_time = std::max(0.0, (double)stealth.time - (double)stealth.prepare_time - timelapse_time_seconds);
+
+    j["estimated_print_time"] = get_time_dhms(normal.time);
+    j["estimated_print_time_seconds"] = normal.time;
+    j["prepare_time_seconds"] = normal.prepare_time;
+    j["prepare_time_formatted"] = get_time_dhms(normal.prepare_time);
+    j["timelapse_time_seconds"] = timelapse_time_seconds;
+    j["timelapse_time_formatted"] = get_time_dhms(timelapse_time_seconds);
+    j["model_print_time_seconds"] = normal_model_time;
+    j["model_print_time_formatted"] = get_time_dhms(normal_model_time);
+    j["initial_layer_time_seconds"] = initial_layer_time_seconds;
+    j["initial_layer_time_formatted"] = get_time_dhms(initial_layer_time_seconds);
+
+    if (stealth.time > 0.0f) {
+        j["estimated_silent_print_time"] = get_time_dhms(stealth.time);
+        j["estimated_silent_print_time_seconds"] = stealth.time;
     }
-    
-    // Format time: "1h 23m 45s"
-    int h = (int)(time_seconds / 3600);
-    int m = (int)((time_seconds - h * 3600) / 60);
-    int s = (int)(time_seconds - h * 3600 - m * 60);
-    
-    // Only show hours if > 0
-    oss << "  \"estimated_print_time\": \"";
-    if (h > 0) oss << h << "h ";
-    if (m > 0 || h > 0) oss << m << "m ";
-    oss << s << "s\",\n";
+
+    j["time_modes"] = json::object();
+    j["time_modes"]["normal"] = {
+        {"time_seconds", normal.time},
+        {"prepare_time_seconds", normal.prepare_time},
+        {"model_print_time_seconds", normal_model_time},
+        {"time_formatted", get_time_dhms(normal.time)},
+        {"prepare_time_formatted", get_time_dhms(normal.prepare_time)},
+        {"model_print_time_formatted", get_time_dhms(normal_model_time)}
+    };
+    if (stealth.time > 0.0f) {
+        j["time_modes"]["stealth"] = {
+            {"time_seconds", stealth.time},
+            {"prepare_time_seconds", stealth.prepare_time},
+            {"model_print_time_seconds", stealth_model_time},
+            {"time_formatted", get_time_dhms(stealth.time)},
+            {"prepare_time_formatted", get_time_dhms(stealth.prepare_time)},
+            {"model_print_time_formatted", get_time_dhms(stealth_model_time)}
+        };
+    }
 
     double total_vol = 0.0;      // volume in mm3
     double total_weight = 0.0;   // weight in g
     double total_cost = 0.0;     // cost
     double total_filament_len = 0.0; // length in mm
 
-    // Calculate per-filament stats
     std::map<size_t, double> filament_usage; // extruder_id -> length
 
     for (const auto& [extruder_id, volume] : stats.total_volumes_per_extruder) {
         total_vol += volume;
 
-        // Get filament properties for this extruder
         double diameter = 1.75;
         if (extruder_id < config.filament_diameter.values.size())
             diameter = config.filament_diameter.values[extruder_id];
@@ -169,12 +220,8 @@ static std::string generate_stats_json(const PrintEstimatedStatistics& stats, co
         if (extruder_id < config.filament_cost.values.size())
             cost = config.filament_cost.values[extruder_id]; // cost per kg
 
-        double area = PI * (diameter / 2.0) * (diameter / 2.0);
-        double length = 0.0;
-        if (area > 0.0) length = volume / area;
-        
-        // Weight: volume(mm3) * density(g/cm3) / 1000
-        double weight = volume * density / 1000.0;
+        double length = length_from_volume(volume, diameter);
+        double weight = volume * density / 1000.0; // g
 
         total_filament_len += length;
         total_weight += weight;
@@ -183,24 +230,37 @@ static std::string generate_stats_json(const PrintEstimatedStatistics& stats, co
         filament_usage[extruder_id] = length;
     }
 
-    oss << "  \"total_used_filament\": " << total_filament_len << ",\n";
-    oss << "  \"total_extruded_volume\": " << total_vol << ",\n";
-    oss << "  \"total_weight\": " << total_weight << ",\n";
-    oss << "  \"total_cost\": " << total_cost << ",\n";
-    oss << "  \"total_toolchanges\": " << stats.total_extruder_changes << ",\n"; 
-    oss << "  \"filament_stats\": {\n";
+    j["total_used_filament"] = total_filament_len;
+    j["total_extruded_volume"] = total_vol;
+    j["total_weight"] = total_weight;
+    j["total_cost"] = total_cost;
+    j["total_toolchanges"] = stats.total_extruder_changes;
+    j["total_filament_changes"] = stats.total_filament_changes;
+    j["total_extruder_changes"] = stats.total_extruder_changes;
+    j["total_nozzle_changes"] = stats.total_nozzle_changes;
 
-    bool first = true;
+    json filament_stats = json::object();
     for (const auto& pair : filament_usage) {
-        if (!first) oss << ",\n";
-        oss << "    \"" << pair.first << "\": " << pair.second;
-        first = false;
+        filament_stats[std::to_string(pair.first)] = pair.second;
     }
+    j["filament_stats"] = filament_stats;
 
-    oss << "\n  }\n";
-    oss << "}";
-    
-    return oss.str();
+    j["filament_usage_mm3"] = json::object();
+    j["filament_usage_mm3"]["total"] = volume_map_to_json(stats.total_volumes_per_extruder);
+    j["filament_usage_mm3"]["model"] = volume_map_to_json(stats.model_volumes_per_extruder);
+    j["filament_usage_mm3"]["support"] = volume_map_to_json(stats.support_volumes_per_extruder);
+    j["filament_usage_mm3"]["wipe_tower"] = volume_map_to_json(stats.wipe_tower_volumes_per_extruder);
+
+    j["filament_usage_mm"] = json::object();
+    j["filament_usage_mm"]["total"] = length_map_to_json(stats.total_volumes_per_extruder);
+    j["filament_usage_mm"]["model"] = length_map_to_json(stats.model_volumes_per_extruder);
+    j["filament_usage_mm"]["support"] = length_map_to_json(stats.support_volumes_per_extruder);
+    j["filament_usage_mm"]["wipe_tower"] = length_map_to_json(stats.wipe_tower_volumes_per_extruder);
+
+    j["volumes_per_color_change_mm3"] = stats.volumes_per_color_change;
+    j["flush_per_filament_mm3"] = volume_map_to_json(stats.flush_per_filament);
+
+    return j.dump(4);
 }
 
 static std::string generate_config_json(const ConfigBase& config) {
@@ -736,7 +796,17 @@ int slicer_export_gcode(SlicerContext* ctx, const char* output_path) {
 
         // Cache stats JSON
         std::cerr << "SlicerCAPI: Caching stats JSON from export result..." << std::endl;
-        ctx->stats_json = generate_stats_json(result.print_statistics, ctx->print->config());
+        double timelapse_time = 0.0;
+        auto tl_it = result.skippable_part_time.find(SkipType::stTimelapse);
+        if (tl_it != result.skippable_part_time.end())
+            timelapse_time = tl_it->second;
+
+        ctx->stats_json = generate_stats_json(
+            result.print_statistics,
+            ctx->print->config(),
+            timelapse_time,
+            result.initial_layer_time
+        );
         std::cerr << "SlicerCAPI: Stats JSON cached." << std::endl;
 
         // Debug Config Limits
