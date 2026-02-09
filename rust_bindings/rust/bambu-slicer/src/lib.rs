@@ -247,6 +247,45 @@ impl Slicer {
             .map_err(|e| SlicerError::Internal(format!("Failed to parse statistics: {}", e)))
     }
 
+    /// Retrieve the full resolved configuration as JSON string
+    ///
+    /// Returns all configuration keys and their serialized values after presets
+    /// and custom parameters are applied.
+    pub fn get_config_json(&self) -> Result<String> {
+        let config_ptr = unsafe { ffi::slicer_get_config_json(self.ctx) };
+        if config_ptr.is_null() {
+            let error_msg = self.get_error_message();
+            return Err(SlicerError::Internal(format!(
+                "Failed to get config JSON: {}",
+                error_msg.unwrap_or_else(|| "unknown error".to_string())
+            )));
+        }
+
+        let config_json = unsafe { CStr::from_ptr(config_ptr) }
+            .to_str()
+            .map_err(|_| SlicerError::Internal("Invalid UTF-8 in config JSON".to_string()))?;
+
+        Ok(config_json.to_string())
+    }
+
+    /// Retrieve selected preset names as JSON string
+    pub fn get_preset_info_json(&self) -> Result<String> {
+        let preset_ptr = unsafe { ffi::slicer_get_preset_info_json(self.ctx) };
+        if preset_ptr.is_null() {
+            let error_msg = self.get_error_message();
+            return Err(SlicerError::Internal(format!(
+                "Failed to get preset info JSON: {}",
+                error_msg.unwrap_or_else(|| "unknown error".to_string())
+            )));
+        }
+
+        let preset_json = unsafe { CStr::from_ptr(preset_ptr) }
+            .to_str()
+            .map_err(|_| SlicerError::Internal("Invalid UTF-8 in preset JSON".to_string()))?;
+
+        Ok(preset_json.to_string())
+    }
+
     /// Export G-code to file
     ///
     /// Must be called after [`slice`](Self::slice).

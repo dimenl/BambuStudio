@@ -5,8 +5,9 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use bambu_slicer::{slice_model, Slicer, SlicerConfig, SlicerStats};
+use bambu_slicer::{Slicer, SlicerConfig, SlicerStats};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use tower_http::cors::{Any, CorsLayer};
@@ -45,8 +46,13 @@ struct SliceResponse {
     /// Print statistics
     stats: SlicerStats,
 
-    /// Base64-encoded G-code content
-    gcode: String,
+    /// Presets actually used after resolution/fallback
+    presets: Value,
+
+    /// Full resolved configuration used for slicing
+    config: Value,
+    // /// Base64-encoded G-code content
+    // gcode: String,
 }
 
 /// Health check response
@@ -204,18 +210,20 @@ async fn slice(mut multipart: Multipart) -> Result<Json<SliceResponse>, AppError
     info!("Starting slicing process");
     let output_path = temp_dir.path().join("output.gcode");
 
-    let stats = if config.custom_params.is_some() {
+    let result = if config.custom_params.is_some() {
         // Use builder API for custom parameters
         slice_with_custom_params(&model_path, &output_path, &config)?
     } else {
-        // Use simple API for presets
+        // Use builder API for presets (to capture resolved config)
         slice_with_presets(&model_path, &output_path, &config)?
     };
 
     info!("Slicing completed successfully");
     info!(
         "Stats: time={}, filament={:.2}mm, weight={:.2}g",
-        stats.estimated_print_time, stats.total_used_filament, stats.total_weight
+        result.stats.estimated_print_time,
+        result.stats.total_used_filament,
+        result.stats.total_weight
     );
 
     // Read G-code and encode as base64
@@ -224,9 +232,18 @@ async fn slice(mut multipart: Multipart) -> Result<Json<SliceResponse>, AppError
 
     Ok(Json(SliceResponse {
         job_id,
-        stats,
-        gcode: gcode_base64,
+        stats: result.stats,
+        presets: result.presets,
+        config: result.config,
+        // gcode: gcode_base64,
     }))
+}
+
+#[derive(Debug)]
+struct SliceOutcome {
+    stats: SlicerStats,
+    presets: Value,
+    config: Value,
 }
 
 /// Slice using preset-based configuration (simple API)
@@ -234,15 +251,39 @@ fn slice_with_presets(
     model_path: &Path,
     output_path: &Path,
     config: &SliceRequest,
-) -> Result<SlicerStats, AppError> {
+) -> Result<SliceOutcome, AppError> {
+    let mut slicer = Slicer::new()?;
+
+    // Load model
+    slicer.load_model(model_path)?;
+
+    // Load presets
     let slicer_config = SlicerConfig {
         printer_preset: config.printer_preset.clone(),
         filament_preset: config.filament_preset.clone(),
         process_preset: config.process_preset.clone(),
         custom_config_json: None,
     };
+    slicer.load_preset(&slicer_config)?;
 
-    slice_model(model_path, &slicer_config, output_path).map_err(Into::into)
+    // Slice
+    slicer.slice()?;
+
+    // Export
+    slicer.export_gcode(output_path)?;
+
+    // Get statistics (after export)
+    let stats = slicer.get_stats()?;
+
+    // Get resolved config/presets
+    let presets = parse_json_value(slicer.get_preset_info_json()?, "preset info")?;
+    let config = parse_json_value(slicer.get_config_json()?, "config")?;
+
+    Ok(SliceOutcome {
+        stats,
+        presets,
+        config,
+    })
 }
 
 /// Slice using custom parameters (builder API)
@@ -250,7 +291,7 @@ fn slice_with_custom_params(
     model_path: &Path,
     output_path: &Path,
     config: &SliceRequest,
-) -> Result<SlicerStats, AppError> {
+) -> Result<SliceOutcome, AppError> {
     let mut slicer = Slicer::new()?;
 
     // Load model
@@ -286,7 +327,24 @@ fn slice_with_custom_params(
     // Get statistics (after export)
     let stats = slicer.get_stats()?;
 
-    Ok(stats)
+    // Get resolved config/presets
+    let presets = parse_json_value(slicer.get_preset_info_json()?, "preset info")?;
+    let config = parse_json_value(slicer.get_config_json()?, "config")?;
+
+    Ok(SliceOutcome {
+        stats,
+        presets,
+        config,
+    })
+}
+
+fn parse_json_value(json_str: String, label: &str) -> Result<Value, AppError> {
+    serde_json::from_str(&json_str).map_err(|e| {
+        AppError::SlicerError(bambu_slicer::SlicerError::Internal(format!(
+            "Failed to parse {} JSON: {}",
+            label, e
+        )))
+    })
 }
 
 /// Simple base64 encoding

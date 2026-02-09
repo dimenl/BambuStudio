@@ -223,6 +223,36 @@ int slicer_slice_and_export(SlicerContext* ctx, const char* output_path);
  */
 const char* slicer_get_stats_json(SlicerContext* ctx);
 
+/**
+ * @brief Get the full resolved configuration as JSON string
+ *
+ * Returns all configuration keys and their serialized values after presets
+ * and custom parameters are applied.
+ *
+ * @param ctx Slicer context
+ * @return JSON string, or NULL on error
+ *
+ * @note The returned string is owned by the context and will be
+ *       invalidated on the next call to this function or when
+ *       the context is destroyed. Copy if needed.
+ */
+const char* slicer_get_config_json(SlicerContext* ctx);
+
+/**
+ * @brief Get selected preset names as JSON string
+ *
+ * Returns a JSON object with printer/filament/process preset names
+ * that were actually selected.
+ *
+ * @param ctx Slicer context
+ * @return JSON string, or NULL on error
+ *
+ * @note The returned string is owned by the context and will be
+ *       invalidated on the next call to this function or when
+ *       the context is destroyed. Copy if needed.
+ */
+const char* slicer_get_preset_info_json(SlicerContext* ctx);
+
 /* ============================================================================
  * Error Handling
  * ============================================================================ */

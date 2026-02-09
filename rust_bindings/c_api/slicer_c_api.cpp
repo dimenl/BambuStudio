@@ -29,11 +29,13 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+#include "nlohmann/json.hpp"
 
 // JSON library for statistics output
 #include <sstream>
 
 using namespace Slic3r;
+using nlohmann::json;
 
 /* ============================================================================
  * Internal Structures
@@ -60,6 +62,17 @@ struct SlicerContext {
     
     // Statistics (cached as JSON)
     std::string stats_json;
+
+    // Configuration (cached as JSON)
+    std::string config_json;
+
+    // Preset info (cached as JSON)
+    std::string preset_info_json;
+
+    // Selected preset names
+    std::string selected_printer_preset;
+    std::string selected_filament_preset;
+    std::string selected_process_preset;
     
     SlicerContext() {
         model = std::make_unique<Model>();
@@ -188,6 +201,31 @@ static std::string generate_stats_json(const PrintEstimatedStatistics& stats, co
     oss << "}";
     
     return oss.str();
+}
+
+static std::string generate_config_json(const ConfigBase& config) {
+    json j;
+
+    for (const std::string &opt_key : config.keys()) {
+        const ConfigOption* opt = config.option(opt_key);
+        if (opt == nullptr) {
+            continue;
+        }
+
+        if (opt->is_scalar()) {
+            if (opt->type() == coString) {
+                j[opt_key] = static_cast<const ConfigOptionString*>(opt)->value;
+            } else {
+                j[opt_key] = opt->serialize();
+            }
+        } else {
+            const ConfigOptionVectorBase* vec = static_cast<const ConfigOptionVectorBase*>(opt);
+            std::vector<std::string> string_values = vec->vserialize();
+            j[opt_key] = string_values;
+        }
+    }
+
+    return j.dump(4);
 }
 
 /* ============================================================================
@@ -346,16 +384,47 @@ int slicer_load_preset(
         if (printer && *printer) {
             std::string printer_name(printer);
             std::cerr << "SlicerCAPI: Attempting to load printer preset: " << printer_name << std::endl;
+            
             if (!ctx->preset_bundle->printers.find_preset(printer_name, false)) {
                 std::cerr << "SlicerCAPI: Printer preset NOT found: " << printer_name << std::endl;
-                ctx->set_error(std::string("Printer preset not found: ") + printer_name);
+                
+                // Log available presets
+                std::cerr << "Available printer presets:" << std::endl;
+                for (const auto& preset : ctx->preset_bundle->printers) {
+                    std::cerr << "  - " << preset.name << std::endl;
+                }
+
+                // Fallback: try to find a preset that contains the requested name or vice versa
+                std::string best_match;
+                for (const auto& preset : ctx->preset_bundle->printers) {
+                    if (preset.name.find(printer_name) != std::string::npos || 
+                        printer_name.find(preset.name) != std::string::npos) {
+                        best_match = preset.name;
+                        break;
+                    }
+                }
+
+                if (!best_match.empty()) {
+                    std::cerr << "SlicerCAPI: Found fallback printer preset: " << best_match << std::endl;
+                    printer_name = best_match;
+                } else {
+                    ctx->set_error(std::string("Printer preset not found: ") + printer_name);
+                    return SLICER_ERROR_PRESET_NOT_FOUND;
+                }
+            }
+            
+            ctx->preset_bundle->printers.select_preset_by_name(printer_name, true, true);
+            ctx->selected_printer_preset = ctx->preset_bundle->printers.get_selected_preset().name;
+
+            if (ctx->selected_printer_preset != printer_name) {
+                ctx->set_error(std::string("Printer preset not selected: requested '") +
+                               printer_name + "', selected '" + ctx->selected_printer_preset + "'");
                 return SLICER_ERROR_PRESET_NOT_FOUND;
             }
-            ctx->preset_bundle->printers.select_preset_by_name(printer_name, true);
             
             // Apply to context config
             ctx->config.apply(ctx->preset_bundle->printers.get_selected_preset().config);
-            std::cerr << "SlicerCAPI: Printer preset selected and applied: " << printer_name << std::endl;
+            std::cerr << "SlicerCAPI: Printer preset selected and applied: " << ctx->selected_printer_preset << std::endl;
             
             // Check printable_area immediately (BambuStudio uses printable_area, not bed_shape)
             if (ctx->config.has("printable_area")) {
@@ -374,8 +443,15 @@ int slicer_load_preset(
                 ctx->set_error(std::string("Filament preset not found: ") + filament_name);
                 return SLICER_ERROR_PRESET_NOT_FOUND;
             }
-            ctx->preset_bundle->filaments.select_preset_by_name(filament_name, true);
-            std::cerr << "SlicerCAPI: Filament preset selected: " << filament_name << std::endl;
+            ctx->preset_bundle->filaments.select_preset_by_name(filament_name, true, true);
+            ctx->selected_filament_preset = ctx->preset_bundle->filaments.get_selected_preset().name;
+
+            if (ctx->selected_filament_preset != filament_name) {
+                ctx->set_error(std::string("Filament preset not selected: requested '") +
+                               filament_name + "', selected '" + ctx->selected_filament_preset + "'");
+                return SLICER_ERROR_PRESET_NOT_FOUND;
+            }
+            std::cerr << "SlicerCAPI: Filament preset selected: " << ctx->selected_filament_preset << std::endl;
         }
 
         // Select Process
@@ -387,15 +463,40 @@ int slicer_load_preset(
                 ctx->set_error(std::string("Process preset not found: ") + process_name);
                 return SLICER_ERROR_PRESET_NOT_FOUND;
             }
-            ctx->preset_bundle->prints.select_preset_by_name(process_name, true);
-            std::cerr << "SlicerCAPI: Process preset selected: " << process_name << std::endl;
+            ctx->preset_bundle->prints.select_preset_by_name(process_name, true, true);
+            ctx->selected_process_preset = ctx->preset_bundle->prints.get_selected_preset().name;
+
+            if (ctx->selected_process_preset != process_name) {
+                ctx->set_error(std::string("Process preset not selected: requested '") +
+                               process_name + "', selected '" + ctx->selected_process_preset + "'");
+                return SLICER_ERROR_PRESET_NOT_FOUND;
+            }
+            std::cerr << "SlicerCAPI: Process preset selected: " << ctx->selected_process_preset << std::endl;
         }
 
         // Apply config to context
         ctx->config = ctx->preset_bundle->full_config();
         std::cerr << "SlicerCAPI: Full config applied from preset bundle." << std::endl;
+
+        // FORCE RE-APPLY PRINTER CONFIG
+        // Sometimes full_config() might not merge correctly if there are inheritance issues
+        // Re-applying the selected printer config ensures machine limits are set
+        // if (printer && *printer) {
+        //      std::cerr << "SlicerCAPI: Re-applying selected printer preset config to ensure precedence..." << std::endl;
+        //      ctx->config.apply(ctx->preset_bundle->printers.get_selected_preset().config);
+             
+        //      // Check acceleration AGAIN
+        //      if (ctx->config.has("machine_max_acceleration_x")) {
+        //          const ConfigOptionFloats* acc = ctx->config.opt<ConfigOptionFloats>("machine_max_acceleration_x");
+        //          if (acc && !acc->values.empty()) {
+        //              std::cerr << "SlicerCAPI: CONFIG AFTER RE-APPLY machine_max_acceleration_x: " << acc->values[0] << std::endl;
+        //          }
+        //      }
+        // }
         
         ctx->config_loaded = true;
+        ctx->config_json.clear();
+        ctx->preset_info_json.clear();
         ctx->processed = false; // Invalidate previous processing
         std::cerr << "SlicerCAPI: slicer_load_preset finished successfully." << std::endl;
         return SLICER_SUCCESS;
@@ -434,6 +535,7 @@ int slicer_set_config_param(
         }
         
         ctx->config_loaded = true;
+        ctx->config_json.clear();
         ctx->processed = false; // Invalidate previous processing
         return SLICER_SUCCESS;
         
@@ -522,6 +624,38 @@ int slicer_process(SlicerContext* ctx) {
         }
 
         std::cerr << "SlicerCAPI: Applying model to print..." << std::endl;
+        
+        // // Debug config values
+        // if (ctx->config.has("machine_max_acceleration_x")) {
+        //      const ConfigOptionFloats* acc = ctx->config.opt<ConfigOptionFloats>("machine_max_acceleration_x");
+        //      if (acc && !acc->values.empty()) {
+        //          std::cerr << "SlicerCAPI: DEBUG CONFIG machine_max_acceleration_x: " << acc->values[0] << std::endl;
+                 
+        //          // SAFETY OVERRIDE: If acceleration is 1000 (default) and printer seems to be A1, force it.
+        //          // This covers cases where inheritance fails or defaults stick.
+        //          if (acc->values[0] <= 1000.0) {
+        //              std::string printer_model = ctx->config.opt_string("printer_model");
+        //              if (printer_model.find("A1") != std::string::npos || ctx->config.opt_string("printer_settings_id").find("A1") != std::string::npos) {
+        //                  std::cerr << "SlicerCAPI: WARNING - Detected A1 printer with default acceleration (1000). Forcing override to 12000." << std::endl;
+                         
+        //                  // Force set correct values for A1
+        //                  ConfigOptionFloats* acc_mut = ctx->config.opt<ConfigOptionFloats>("machine_max_acceleration_x", true);
+        //                  if(acc_mut) acc_mut->values = {12000, 12000};
+                         
+        //                  ConfigOptionFloats* acc_y = ctx->config.opt<ConfigOptionFloats>("machine_max_acceleration_y", true);
+        //                  if(acc_y) acc_y->values = {12000, 12000};
+                         
+        //                  ConfigOptionFloats* acc_e = ctx->config.opt<ConfigOptionFloats>("machine_max_acceleration_extruding", true);
+        //                  if(acc_e) acc_e->values = {12000, 12000};
+                         
+        //                  std::cerr << "SlicerCAPI: Acceleration override applied." << std::endl;
+        //              }
+        //          }
+        //      }
+        // } else {
+        //      std::cerr << "SlicerCAPI: DEBUG CONFIG machine_max_acceleration_x NOT SET in ctx->config" << std::endl;
+        // }
+
         ctx->print->apply(*ctx->model, ctx->config);
         
         // Process the print
@@ -688,6 +822,65 @@ const char* slicer_get_stats_json(SlicerContext* ctx) {
     } catch (const std::exception& e) {
         std::cerr << "SlicerCAPI: Exception getting statistics: " << e.what() << std::endl;
         ctx->set_error(std::string("Exception getting statistics: ") + e.what());
+        return nullptr;
+    }
+}
+
+const char* slicer_get_config_json(SlicerContext* ctx) {
+    std::cerr << "SlicerCAPI: slicer_get_config_json called" << std::endl;
+    if (!ctx) {
+        std::cerr << "SlicerCAPI: ctx is null" << std::endl;
+        return nullptr;
+    }
+
+    if (!ctx->config_loaded) {
+        std::cerr << "SlicerCAPI: No configuration loaded" << std::endl;
+        ctx->set_error("No configuration loaded");
+        return nullptr;
+    }
+
+    try {
+        if (ctx->config_json.empty()) {
+            // Use the resolved DynamicPrintConfig stored on the context.
+            // This avoids depending on Print::config() lifecycle details.
+            ctx->config_json = generate_config_json(ctx->config);
+        }
+
+        return ctx->config_json.c_str();
+    } catch (const std::exception& e) {
+        std::cerr << "SlicerCAPI: Exception getting config JSON: " << e.what() << std::endl;
+        ctx->set_error(std::string("Exception getting config JSON: ") + e.what());
+        return nullptr;
+    }
+}
+
+const char* slicer_get_preset_info_json(SlicerContext* ctx) {
+    std::cerr << "SlicerCAPI: slicer_get_preset_info_json called" << std::endl;
+    if (!ctx) {
+        std::cerr << "SlicerCAPI: ctx is null" << std::endl;
+        return nullptr;
+    }
+
+    try {
+        if (ctx->preset_info_json.empty()) {
+            json j;
+            j["printer_preset"] = ctx->selected_printer_preset.empty()
+                ? json(nullptr)
+                : json(ctx->selected_printer_preset);
+            j["filament_preset"] = ctx->selected_filament_preset.empty()
+                ? json(nullptr)
+                : json(ctx->selected_filament_preset);
+            j["process_preset"] = ctx->selected_process_preset.empty()
+                ? json(nullptr)
+                : json(ctx->selected_process_preset);
+
+            ctx->preset_info_json = j.dump(4);
+        }
+
+        return ctx->preset_info_json.c_str();
+    } catch (const std::exception& e) {
+        std::cerr << "SlicerCAPI: Exception getting preset info JSON: " << e.what() << std::endl;
+        ctx->set_error(std::string("Exception getting preset info JSON: ") + e.what());
         return nullptr;
     }
 }
