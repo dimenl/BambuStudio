@@ -31,3 +31,6 @@ doc/
 test.js
 /.cache/
 .clangd
+*.gcode
+Cargo.lock
+base64_input.txt

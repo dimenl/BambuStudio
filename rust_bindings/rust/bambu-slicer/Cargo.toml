@@ -1,0 +1,28 @@
+[package]
+name = "bambu-slicer"
+version = "0.1.0"
+edition = "2021"
+authors = ["BambuStudio Rust Bindings"]
+description = "Rust FFI bindings for BambuStudio slicer core"
+license = "AGPL-3.0"
+repository = "https://github.com/bambulab/BambuStudio"
+
+[lib]
+name = "bambu_slicer"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+
+[build-dependencies]
+bindgen = "0.70"
+cc = "1.0"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[[example]]
+name = "slice_model"
+path = "examples/slice_model.rs"
