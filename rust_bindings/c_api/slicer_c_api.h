@@ -143,6 +143,16 @@ int slicer_load_preset(
  * 
  * @note This is a convenience function for setting individual parameters
  */
+// Load preset bundle and select specific presets with configuration overrides
+// json_overrides: JSON string containing key-value pairs to override config settings
+int slicer_load_preset_with_overrides(
+    SlicerContext* ctx,
+    const char* printer,
+    const char* filament,
+    const char* process,
+    const char* json_overrides
+);
+
 int slicer_set_config_param(
     SlicerContext* ctx,
     const char* key,

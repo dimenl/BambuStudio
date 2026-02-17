@@ -21,6 +21,9 @@ struct SliceRequest {
 
     /// Custom parameters as key-value pairs
     custom_params: Option<Vec<(String, String)>>,
+
+    /// Custom configuration JSON object (overrides presets)
+    custom_config_json: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,7 +149,7 @@ fn slice_with_presets(
         printer_preset: config.printer_preset.clone(),
         filament_preset: config.filament_preset.clone(),
         process_preset: config.process_preset.clone(),
-        custom_config_json: None,
+        custom_config_json: config.custom_config_json.as_ref().map(|v| v.to_string()),
     };
     slicer.load_preset(&slicer_config)?;
 
@@ -181,7 +184,7 @@ fn slice_with_custom_params(
             printer_preset: config.printer_preset.clone(),
             filament_preset: config.filament_preset.clone(),
             process_preset: config.process_preset.clone(),
-            custom_config_json: None,
+            custom_config_json: config.custom_config_json.as_ref().map(|v| v.to_string()),
         };
         slicer.load_preset(&preset_config)?;
     }
@@ -272,6 +275,7 @@ pub(crate) async fn function_handler(event: LambdaEvent<Value>) -> Result<Value,
         filament_preset: Some("Bambu PLA Basic @BBL A1".to_string()),
         process_preset: Some("0.20mm Standard @BBL A1".to_string()),
         custom_params: None,
+        custom_config_json: None,
     });
 
     let outcome = if config.custom_params.is_some() {

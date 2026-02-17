@@ -26,7 +26,10 @@ Read more about building your lambda function in [the Cargo Lambda documentation
         "custom_params": [
             ["layer_height", "0.2"],
             ["support_enable", "false"]
-        ]
+        ],
+        "custom_config_json": {
+            "sparse_infill_density": "15%"
+        }
     }
 }
 ```

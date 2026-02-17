@@ -32,7 +32,7 @@ let config = SlicerConfig {
     printer_preset: Some("Bambu Lab A1 0.4 nozzle".to_string()),
     filament_preset: Some("Bambu PLA Basic @BBL A1".to_string()),
     process_preset: Some("0.20mm Standard @BBL A1".to_string()),
-    custom_config_json: None,
+    custom_config_json: Some(r#"{"sparse_infill_density": "15%"}"#.to_string()),
 };
 
 let stats = slice_model(

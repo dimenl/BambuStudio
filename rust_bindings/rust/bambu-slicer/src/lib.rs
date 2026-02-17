@@ -176,9 +176,14 @@ impl Slicer {
             .as_ref()
             .map(|s| CString::new(s.as_str()))
             .transpose()?;
+        let json_c = config
+            .custom_config_json
+            .as_ref()
+            .map(|s| CString::new(s.as_str()))
+            .transpose()?;
 
         let result = unsafe {
-            ffi::slicer_load_preset(
+            ffi::slicer_load_preset_with_overrides(
                 self.ctx,
                 printer_c
                     .as_ref()
@@ -192,6 +197,7 @@ impl Slicer {
                     .as_ref()
                     .map(|s| s.as_ptr())
                     .unwrap_or(ptr::null()),
+                json_c.as_ref().map(|s| s.as_ptr()).unwrap_or(ptr::null()),
             )
         };
 
@@ -379,10 +385,7 @@ pub fn slice_model(
         slicer.load_preset(config)?;
     }
 
-    if let Some(ref json) = config.custom_config_json {
-        // TODO: Apply JSON config (not yet implemented in C API)
-        let _ = json;
-    }
+    // Custom config JSON is now handled inside load_preset via slicer_load_preset_with_overrides
 
     slicer.slice()?;
     slicer.export_gcode(output_path)?;

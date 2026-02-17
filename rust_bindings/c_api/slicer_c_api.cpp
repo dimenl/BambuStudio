@@ -33,6 +33,7 @@
 
 // JSON library for statistics output
 #include <sstream>
+#include <filesystem>
 
 using namespace Slic3r;
 using nlohmann::json;
@@ -87,6 +88,17 @@ struct SlicerContext {
         last_error.clear();
     }
 };
+
+static bool is_directory_populated(const std::string& path) {
+    if (path.empty()) return false;
+    try {
+        std::filesystem::path p(path);
+        if (std::filesystem::exists(p) && std::filesystem::is_directory(p)) {
+            return !std::filesystem::is_empty(p);
+        }
+    } catch (...) {}
+    return false;
+}
 
 /* ============================================================================
  * Helper Functions
@@ -422,18 +434,30 @@ int slicer_load_preset(
             
             // Set resources directory if not set (important for Docker)
             if (resources_dir().empty()) {
-                // Check if /app/resources exists
-                // For now, hardcode to typical docker location or expect environment
-                // TODO: Add a fix to work both on lambda and service api
-                //  set_resources_dir("/app/resources");
-                set_resources_dir("/tmp/resources");
+                const char* tmp_path = "/tmp/resources";
+                const char* app_path = "/app/resources";
+                
+                if (is_directory_populated(tmp_path)) {
+                    std::cerr << "SlicerCAPI: Using /tmp/resources for resources_dir" << std::endl;
+                    set_resources_dir(tmp_path);
+                } else {
+                    std::cerr << "SlicerCAPI: Falling back to /app/resources for resources_dir" << std::endl;
+                    set_resources_dir(app_path);
+                }
             }
             
             // Set data directory if not set (needed for PresetBundle to find "system" folder)
             if (data_dir().empty()) {
-                // set_data_dir("/app/resources");
-                // TODO: Add a fix to work both on lambda and service api
-                set_data_dir("/tmp/resources");
+                const char* tmp_path = "/tmp/resources";
+                const char* app_path = "/app/resources";
+                
+                if (is_directory_populated(tmp_path)) {
+                    std::cerr << "SlicerCAPI: Using /tmp/resources for data_dir" << std::endl;
+                    set_data_dir(tmp_path);
+                } else {
+                    std::cerr << "SlicerCAPI: Falling back to /app/resources for data_dir" << std::endl;
+                    set_data_dir(app_path);
+                }
             }
             
             ctx->preset_bundle = std::make_unique<PresetBundle>();
@@ -569,6 +593,69 @@ int slicer_load_preset(
         std::cerr << "SlicerCAPI: Exception loading preset: " << e.what() << std::endl;
         ctx->set_error(std::string("Exception loading preset: ") + e.what());
         return SLICER_ERROR_PRESET_NOT_FOUND;
+    }
+}
+
+
+int slicer_load_preset_with_overrides(
+    SlicerContext* ctx,
+    const char* printer,
+    const char* filament,
+    const char* process,
+    const char* json_overrides
+) {
+    // First load the base presets
+    int result = slicer_load_preset(ctx, printer, filament, process);
+    if (result != SLICER_SUCCESS) {
+        return result;
+    }
+
+    // optimizing: check if overrides are empty or null
+    if (!json_overrides || strlen(json_overrides) == 0) {
+        return SLICER_SUCCESS;
+    }
+
+    try {
+        auto j = json::parse(json_overrides);
+        
+        if (!j.is_object()) {
+            ctx->set_error("Overrides JSON must be an object");
+            return SLICER_ERROR_CONFIG_PARSE;
+        }
+
+        ConfigSubstitutionContext substitution_context(ForwardCompatibilitySubstitutionRule::Enable);
+        
+        for (auto& [key, value] : j.items()) {
+             std::string value_str;
+             
+             if (value.is_string()) {
+                 value_str = value.get<std::string>();
+             } else if (value.is_number_integer()) {
+                 value_str = std::to_string(value.get<int>());
+             } else if (value.is_number_float()) {
+                 value_str = std::to_string(value.get<double>());
+             } else if (value.is_boolean()) {
+                 value_str = value.get<bool>() ? "1" : "0";
+             } else {
+                 // Skip arrays/objects for now as simple key-value overrides are the target
+                 continue; 
+             }
+             
+             if (!ctx->config.set_deserialize_nothrow(key, value_str, substitution_context, false)) {
+                 printf("[DEBUG][SlicerCAPI] FAILED to override key: %s with value: %s\n", key.c_str(), value_str.c_str());
+             } else {
+                 printf("[DEBUG][SlicerCAPI] Successfully overridden key: %s = %s\n", key.c_str(), value_str.c_str());
+             }
+        }
+        
+        ctx->config_loaded = true;
+        ctx->config_json.clear();
+        ctx->processed = false; // Invalidate previous processing
+        
+        return SLICER_SUCCESS;
+    } catch (const std::exception& e) {
+        ctx->set_error(std::string("Exception parsing overrides JSON: ") + e.what());
+        return SLICER_ERROR_CONFIG_PARSE;
     }
 }
 

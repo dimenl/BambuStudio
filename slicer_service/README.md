@@ -74,6 +74,7 @@ curl -X POST http://localhost:8080/slice \
     "printer_preset": "Bambu Lab A1 0.4 nozzle",
     "filament_preset": "Bambu PLA Basic @BBL A1",
     "process_preset": "0.20mm Standard @BBL A1"
+    "custom_config_json": null
   }'
 ```
 
