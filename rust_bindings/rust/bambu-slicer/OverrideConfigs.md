@@ -44,6 +44,15 @@ This document lists common configuration keys that can be used effectively with 
 > [!TIP]
 > **Note on Values:** Most values can be passed as strings, even if the internal type is float or int, as the deserializer handles conversion. However, sticking to the expected type in JSON is recommended.
 
+### Bed Type
+- `curr_bed_type`: (string) The type of bed plate. Valid values:
+  - "Default Plate"
+  - "Cool Plate"
+  - "Engineering Plate"
+  - "High Temp Plate"
+  - "Textured PEI Plate"
+  - "Supertack Plate"
+
 ---
 
 ## All Extracted Keys

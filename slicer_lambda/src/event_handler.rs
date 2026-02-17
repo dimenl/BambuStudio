@@ -145,11 +145,16 @@ fn slice_with_presets(
 
     slicer.load_model(model_path)?;
 
+    let custom_config_json = config.custom_config_json.as_ref().map(|v| match v {
+        Value::String(s) => s.clone(),
+        _ => v.to_string(),
+    });
+
     let slicer_config = SlicerConfig {
         printer_preset: config.printer_preset.clone(),
         filament_preset: config.filament_preset.clone(),
         process_preset: config.process_preset.clone(),
-        custom_config_json: config.custom_config_json.as_ref().map(|v| v.to_string()),
+        custom_config_json,
     };
     slicer.load_preset(&slicer_config)?;
 
@@ -158,7 +163,9 @@ fn slice_with_presets(
 
     let stats = slicer.get_stats()?;
     let presets = parse_json_value(slicer.get_preset_info_json()?, "preset info")?;
-    let config = parse_json_value(slicer.get_config_json()?, "config")?;
+    let config_json_str = slicer.get_config_json()?;
+
+    let config = parse_json_value(config_json_str, "config")?;
 
     Ok(SliceOutcome {
         stats,
@@ -180,11 +187,16 @@ fn slice_with_custom_params(
         || config.filament_preset.is_some()
         || config.process_preset.is_some()
     {
+        let custom_config_json = config.custom_config_json.as_ref().map(|v| match v {
+            Value::String(s) => s.clone(),
+            _ => v.to_string(),
+        });
+
         let preset_config = SlicerConfig {
             printer_preset: config.printer_preset.clone(),
             filament_preset: config.filament_preset.clone(),
             process_preset: config.process_preset.clone(),
-            custom_config_json: config.custom_config_json.as_ref().map(|v| v.to_string()),
+            custom_config_json,
         };
         slicer.load_preset(&preset_config)?;
     }
@@ -200,7 +212,9 @@ fn slice_with_custom_params(
 
     let stats = slicer.get_stats()?;
     let presets = parse_json_value(slicer.get_preset_info_json()?, "preset info")?;
-    let config = parse_json_value(slicer.get_config_json()?, "config")?;
+    let config_json_str = slicer.get_config_json()?;
+
+    let config = parse_json_value(config_json_str, "config")?;
 
     Ok(SliceOutcome {
         stats,
