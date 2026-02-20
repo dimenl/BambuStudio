@@ -24,6 +24,9 @@ struct SliceRequest {
 
     /// Custom configuration JSON object (overrides presets)
     custom_config_json: Option<Value>,
+
+    /// Optional rotation to apply to the model in degrees (x, y, z)
+    rotation: Option<(f64, f64, f64)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,8 +158,13 @@ fn slice_with_presets(
         filament_preset: config.filament_preset.clone(),
         process_preset: config.process_preset.clone(),
         custom_config_json,
+        rotation: config.rotation,
     };
     slicer.load_preset(&slicer_config)?;
+
+    if let Some((x, y, z)) = config.rotation {
+        slicer.rotate_model(x, y, z)?;
+    }
 
     slicer.slice()?;
     slicer.export_gcode(output_path)?;
@@ -197,6 +205,7 @@ fn slice_with_custom_params(
             filament_preset: config.filament_preset.clone(),
             process_preset: config.process_preset.clone(),
             custom_config_json,
+            rotation: config.rotation,
         };
         slicer.load_preset(&preset_config)?;
     }
@@ -205,6 +214,10 @@ fn slice_with_custom_params(
         for (key, value) in params {
             slicer.set_config_param(key, value)?;
         }
+    }
+
+    if let Some((x, y, z)) = config.rotation {
+        slicer.rotate_model(x, y, z)?;
     }
 
     slicer.slice()?;
@@ -290,6 +303,7 @@ pub(crate) async fn function_handler(event: LambdaEvent<Value>) -> Result<Value,
         process_preset: Some("0.20mm Standard @BBL A1".to_string()),
         custom_params: None,
         custom_config_json: None,
+        rotation: None,
     });
 
     let outcome = if config.custom_params.is_some() {

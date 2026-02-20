@@ -88,6 +88,9 @@ pub struct SlicerConfig {
 
     /// Custom configuration as JSON string (overrides presets)
     pub custom_config_json: Option<String>,
+
+    /// Optional rotation to apply to the model in degrees (x, y, z)
+    pub rotation: Option<(f64, f64, f64)>,
 }
 
 /// Statistics from the slicing process
@@ -200,6 +203,18 @@ impl Slicer {
                 json_c.as_ref().map(|s| s.as_ptr()).unwrap_or(ptr::null()),
             )
         };
+
+        if result != SLICER_SUCCESS {
+            let error_msg = self.get_error_message();
+            return Err(SlicerError::from_code(result, error_msg));
+        }
+
+        Ok(())
+    }
+
+    /// Rotate the model around X, Y, Z axes (in degrees)
+    pub fn rotate_model(&mut self, x_deg: f64, y_deg: f64, z_deg: f64) -> Result<()> {
+        let result = unsafe { ffi::slicer_rotate_model(self.ctx, x_deg, y_deg, z_deg) };
 
         if result != SLICER_SUCCESS {
             let error_msg = self.get_error_message();
@@ -385,6 +400,10 @@ pub fn slice_model(
         slicer.load_preset(config)?;
     }
 
+    if let Some((x, y, z)) = config.rotation {
+        slicer.rotate_model(x, y, z)?;
+    }
+
     // Custom config JSON is now handled inside load_preset via slicer_load_preset_with_overrides
 
     slicer.slice()?;
@@ -430,6 +449,7 @@ mod tests {
             filament_preset: None,
             process_preset: None,
             custom_config_json: None,
+            rotation: None,
         };
         assert!(config.printer_preset.is_some());
     }

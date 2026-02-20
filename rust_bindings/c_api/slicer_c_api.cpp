@@ -391,6 +391,47 @@ int slicer_load_model(SlicerContext* ctx, const char* model_path) {
     }
 }
 
+int slicer_rotate_model(SlicerContext* ctx, double x_deg, double y_deg, double z_deg) {
+    int err = validate_context(ctx);
+    if (err != SLICER_SUCCESS) return err;
+    
+    if (!ctx->model_loaded || !ctx->model) {
+        ctx->set_error("No model loaded");
+        return SLICER_ERROR_NO_MODEL;
+    }
+    
+    try {
+        double rad_conv = std::acos(-1.0) / 180.0;
+        double x_rad = x_deg * rad_conv;
+        double y_rad = y_deg * rad_conv;
+        double z_rad = z_deg * rad_conv;
+        
+        // Ensure instances exist (loading STL doesn't auto-create instances until needed)
+        ctx->model->add_default_instances();
+        
+        for (auto* obj : ctx->model->objects) {
+            if (obj) {
+                for (auto* inst : obj->instances) {
+                    if (inst) {
+                        Vec3d current_rot = inst->get_rotation();
+                        inst->set_rotation(current_rot + Vec3d(x_rad, y_rad, z_rad));
+                    }
+                }
+                obj->invalidate_bounding_box();
+                obj->ensure_on_bed();
+            }
+        }
+        
+        // Invalidate process status since model changed
+        ctx->processed = false;
+        return SLICER_SUCCESS;
+        
+    } catch (const std::exception& e) {
+        ctx->set_error(std::string("Exception rotating model: ") + e.what());
+        return SLICER_ERROR_PROCESS_FAILED;
+    }
+}
+
 /* ============================================================================
  * Configuration
  * ============================================================================ */

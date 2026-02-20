@@ -38,6 +38,9 @@ struct SliceRequest {
 
     /// Custom configuration JSON object (overrides presets)
     custom_config_json: Option<Value>,
+
+    /// Optional rotation to apply to the model in degrees (x, y, z)
+    rotation: Option<(f64, f64, f64)>,
 }
 
 /// Slice response
@@ -208,6 +211,7 @@ async fn slice(mut multipart: Multipart) -> Result<Json<SliceResponse>, AppError
         process_preset: Some("0.20mm Standard @BBL A1".to_string()),
         custom_params: None,
         custom_config_json: None,
+        rotation: None,
     });
 
     // Perform slicing
@@ -267,8 +271,13 @@ fn slice_with_presets(
         filament_preset: config.filament_preset.clone(),
         process_preset: config.process_preset.clone(),
         custom_config_json: config.custom_config_json.as_ref().map(|v| v.to_string()),
+        rotation: config.rotation,
     };
     slicer.load_preset(&slicer_config)?;
+
+    if let Some((x, y, z)) = config.rotation {
+        slicer.rotate_model(x, y, z)?;
+    }
 
     // Slice
     slicer.slice()?;
@@ -311,6 +320,7 @@ fn slice_with_custom_params(
             filament_preset: config.filament_preset.clone(),
             process_preset: config.process_preset.clone(),
             custom_config_json: config.custom_config_json.as_ref().map(|v| v.to_string()),
+            rotation: config.rotation,
         };
         slicer.load_preset(&preset_config)?;
     }
@@ -320,6 +330,10 @@ fn slice_with_custom_params(
         for (key, value) in params {
             slicer.set_config_param(key, value)?;
         }
+    }
+
+    if let Some((x, y, z)) = config.rotation {
+        slicer.rotate_model(x, y, z)?;
     }
 
     // Slice

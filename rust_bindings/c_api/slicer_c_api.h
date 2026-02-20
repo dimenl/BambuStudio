@@ -89,6 +89,20 @@ void slicer_destroy(SlicerContext* ctx);
  */
 int slicer_load_model(SlicerContext* ctx, const char* model_path);
 
+/**
+ * @brief Apply rotation to the loaded model
+ * 
+ * @param ctx Slicer context
+ * @param x_deg Rotation around X axis in degrees
+ * @param y_deg Rotation around Y axis in degrees
+ * @param z_deg Rotation around Z axis in degrees
+ * @return SLICER_SUCCESS on success, error code otherwise
+ * 
+ * @note This modifies the rotation of all instances in the currently loaded model.
+ *       It should be called after slicer_load_model and before slicer_process.
+ */
+int slicer_rotate_model(SlicerContext* ctx, double x_deg, double y_deg, double z_deg);
+
 /* ============================================================================
  * Configuration
  * ============================================================================ */
