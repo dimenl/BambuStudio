@@ -7,6 +7,7 @@ edition = "2021"
 aws-config = "1"
 aws-sdk-s3 = "1"
 bambu-slicer = { path = "../rust_bindings/rust/bambu-slicer" }
+base64 = "0.22"
 lambda_runtime = "1.0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

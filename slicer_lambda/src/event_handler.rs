@@ -27,6 +27,9 @@ struct SliceRequest {
 
     /// Optional rotation to apply to the model in degrees (x, y, z)
     rotation: Option<(f64, f64, f64)>,
+
+    #[serde(default)]
+    gcode_needed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +48,8 @@ struct SliceResponse {
     stats: SlicerStats,
     presets: Value,
     config: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gcode: Option<String>,
 }
 
 #[derive(Debug)]
@@ -260,6 +265,20 @@ fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Simple base64 encoding
+fn base64_encode(data: &[u8]) -> String {
+    use std::io::Write;
+    let mut output = Vec::new();
+    {
+        let mut encoder = base64::write::EncoderWriter::new(
+            &mut output,
+            &base64::engine::general_purpose::STANDARD,
+        );
+        encoder.write_all(data).unwrap();
+    }
+    String::from_utf8(output).unwrap()
+}
+
 async fn ensure_resources_in_tmp() -> Result<(), Error> {
     let src = Path::new("/app/resources");
     let dst = Path::new("/tmp/resources");
@@ -304,6 +323,7 @@ pub(crate) async fn function_handler(event: LambdaEvent<Value>) -> Result<Value,
         custom_params: None,
         custom_config_json: None,
         rotation: None,
+        gcode_needed: false,
     });
 
     let outcome = if config.custom_params.is_some() {
@@ -312,10 +332,18 @@ pub(crate) async fn function_handler(event: LambdaEvent<Value>) -> Result<Value,
         slice_with_presets(&input_path, &output_gcode_path, &config)?
     };
 
+    let gcode_base64 = if config.gcode_needed {
+        let gcode_bytes = fs::read(&output_gcode_path).await?;
+        Some(base64_encode(&gcode_bytes))
+    } else {
+        None
+    };
+
     let response = SliceResponse {
         stats: outcome.stats,
         presets: outcome.presets,
         config: outcome.config,
+        gcode: gcode_base64,
     };
 
     let response_json = serde_json::to_vec_pretty(&response)?;
