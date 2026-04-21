@@ -1,0 +1,22 @@
+services:
+  smart-slicer-service:
+    # platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.smartService
+    image: bambu-smart-slicer-service:latest
+    container_name: bambu-smart-slicer
+    ports:
+      - "5000:5000"
+    environment:
+      - RUST_LOG=info,tower_http=debug
+      - AWS_REGION=${AWS_REGION:-ap-south-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+    volumes:
+      - smart-slicer-model-cache:/tmp/models
+    restart: unless-stopped
+
+volumes:
+  smart-slicer-model-cache:

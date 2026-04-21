@@ -1,0 +1,30 @@
+[package]
+name = "smart-slicer-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.7.5", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "request-id", "limit"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dotenv = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "json", "env-filter"] }
+tracing-appender = "0.2"
+aws-config = "1"
+aws-sdk-s3 = "1"
+bambu-slicer = { path = "../rust_bindings/rust/bambu-slicer" }
+base64 = "0.22"
+sea-orm = { version = "0.12", features = ["sqlx-postgres", "runtime-tokio-native-tls"] }
+sea-orm-migration = { version = "0.12", features = ["runtime-tokio-native-tls"] }
+jsonwebtoken = "9"
+bcrypt = "0.15"
+uuid = { version = "1", features = ["v4"] }
+lazy_static = "1"
+thiserror = "1"
+bytes = "1"
+hyper = { version = "0.14", features = ["full"] }
+chrono = { version = "0.4", features = ["clock", "serde"] }
+tempfile = "3.8"
