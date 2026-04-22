@@ -15,6 +15,8 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "json", "env-filter"]
 tracing-appender = "0.2"
 aws-config = "1"
 aws-sdk-s3 = "1"
+aws-sdk-sts = "1"
+aws-credential-types = "1"
 bambu-slicer = { path = "../rust_bindings/rust/bambu-slicer" }
 base64 = "0.22"
 sea-orm = { version = "0.12", features = ["sqlx-postgres", "runtime-tokio-native-tls"] }

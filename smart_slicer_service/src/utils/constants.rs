@@ -10,4 +10,9 @@ lazy_static! {
         dotenv().ok();
         env::var("LOG_DIR").unwrap_or_else(|_| "logs".into())
     };
+    /// Port where the HTTP server will listen
+    pub static ref SERVER_PORT: String = {
+        dotenv().ok();
+        env::var("SERVER_PORT").unwrap_or_else(|_| "5000".into())
+    };
 }

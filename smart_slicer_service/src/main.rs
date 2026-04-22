@@ -11,7 +11,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use utils::{LOG_DIR, logging};
+use utils::{LOG_DIR, SERVER_PORT, logging};
 
 async fn not_found() -> impl IntoResponse {
     types::error_types::AppError::NotFound
@@ -44,8 +44,8 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
-    let addr = "0.0.0.0:5000";
+    let addr = format!("0.0.0.0:{}", SERVER_PORT.as_str());
     tracing::info!("Server running on {addr}");
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

@@ -10,6 +10,11 @@ pub struct SliceRouteRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LoadModelRequest {
+    pub input_path: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SliceConfigRequest {
     pub printer_preset: Option<String>,
     pub filament_preset: Option<String>,
@@ -42,4 +47,10 @@ pub struct SliceRouteResponse {
     pub config: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gcode: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoadModelResponse {
+    pub local_path: String,
+    pub cached: bool,
 }

@@ -8,6 +8,10 @@ use crate::handlers;
 pub fn unguarded_routes() -> Router {
     Router::new()
         .route("/api/health", get(handlers::health_handler::health))
+        .route(
+            "/api/load-model",
+            post(handlers::slicer_handlers::load_model),
+        )
         .route("/api/slice", post(handlers::slicer_handlers::slice))
 }
 
