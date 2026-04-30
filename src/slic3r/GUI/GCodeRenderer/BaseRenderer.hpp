@@ -39,6 +39,7 @@ namespace Slic3r {
                 ColorPrint,
                 FilamentId,
                 LayerTime,
+                AdditionalFanSpeed,
                 // helio
                 ThermalIndexMin,
                 ThermalIndexMax,
@@ -182,6 +183,7 @@ namespace Slic3r {
                 void render_shells();
                 void render_slider(int canvas_width, int canvas_height);
                 virtual void render_legend(float& legend_height, int canvas_width, int canvas_height, int right_margin);
+                void apply_view_type_selection(int view_type_sel, EViewType type);
                 void update_by_mode(ConfigOptionMode mode);
                 void update_thermal_options(bool add);
                 void push_combo_style();
@@ -198,7 +200,7 @@ namespace Slic3r {
                 // end helio
             private:
                 void delete_wipe_tower();
-                void render_legend_color_arr_recommen(float window_padding);
+                void render_legend_color_arr_recommen(float window_padding, bool is_show_left_right_result);
 
             protected:
                 bool m_legend_enabled{ true };
@@ -251,7 +253,7 @@ namespace Slic3r {
                 bool m_only_gcode_in_preview{ false };
                 //BBS
                 Shells            m_shells;
-                const DynamicPrintConfig *m_config;//equal glcanvas3d m_config
+                const DynamicPrintConfig *m_config{ nullptr };//equal glcanvas3d m_config
                 GCodeCheckResult  m_gcode_check_result;
                 FilamentPrintableResult filament_printable_reuslt;
                 ConflictResultOpt m_conflict_result;
@@ -425,6 +427,8 @@ namespace Slic3r {
                 Range feedrate;
                 // Color mapping by fan speed.
                 Range fan_speed;
+                // Color mapping by additional fan speed.
+                Range additional_fan_speed;
                 // Color mapping by volumetric extrusion rate.
                 Range volumetric_rate;
                 // Color mapping by extrusion temperature.
@@ -445,6 +449,7 @@ namespace Slic3r {
                     width.reset();
                     feedrate.reset();
                     fan_speed.reset();
+                    additional_fan_speed.reset();
                     volumetric_rate.reset();
                     temperature.reset();
                     layer_duration.reset(true);

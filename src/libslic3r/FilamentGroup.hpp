@@ -86,6 +86,7 @@ namespace Slic3r
             FGMode mode;
             FGStrategy strategy;
             bool ignore_ext_filament;
+            bool has_filament_switcher = false;
             std::vector<int> filament_volume_map;
         } group_info;
 
@@ -106,6 +107,7 @@ namespace Slic3r
         struct NozzleInfo {
             std::map<int, std::vector<int>> extruder_nozzle_list;
             std::vector<MultiNozzleUtils::NozzleInfo> nozzle_list;
+            std::unordered_map<int, int> nozzle_status;
         } nozzle_info;
     };
 
@@ -114,6 +116,7 @@ namespace Slic3r
         const std::vector<unsigned int>& used_filaments,
         const std::vector<FilamentGroupUtils::FilamentInfo>& used_filament_info,
         const std::vector<std::vector<FilamentGroupUtils::MachineFilamentInfo>>& machine_filament_info,
+        const bool has_filament_switcher = false,
         const double color_delta_threshold = 20);
 
 
@@ -152,7 +155,6 @@ namespace Slic3r
         std::vector<int> calc_filament_group_for_match(int* cost = nullptr);
         std::vector<int> calc_filament_group_for_flush(int* cost = nullptr);
         std::vector<int> calc_filament_group_for_tpu(int* cost = nullptr);
-
     private:
         std::vector<int> calc_min_flush_group(int* cost = nullptr);
         std::vector<int> calc_min_flush_group_by_enum(const std::vector<unsigned int>& used_filaments, int* cost = nullptr);
@@ -191,6 +193,15 @@ namespace Slic3r
     std::vector<int> calc_filament_group_for_manual_multi_nozzle(const std::vector<int>& filament_map_manual,const FilamentGroupContext& ctx);
 
     std::vector<int> calc_filament_group_for_match_multi_nozzle(const FilamentGroupContext& ctx);
+
+    struct FilamentPlanRes
+    {
+        std::vector<int> fil_order;
+        std::vector<int> fil_nozzle_match;
+    };
+
+    std::vector<FilamentPlanRes> plan_filament_nozzle_mapping_and_order(const FilamentGroupContext& ctx);
+
 
     class KMediods2
     {

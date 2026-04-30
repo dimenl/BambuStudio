@@ -45,6 +45,8 @@ struct SurfaceFillParams
     // FillParams
     float       	density = 0.f;
 	int 			multiline = 1;
+	// travel into wall length, ratio to line width
+    float           monotonic_travel_into_wall = 0.f;
     // Don't adjust spacing to fill the space evenly.
 //    bool        	dont_adjust = false;
     // Length of the infill anchor along the perimeter line.
@@ -67,6 +69,7 @@ struct SurfaceFillParams
 	float			sparse_infill_speed = 0;
 	float			top_surface_speed = 0;
 	float			solid_infill_speed = 0;
+    float           initial_layer_flow_ratio    = 1.f;
     float           infill_shift_step          = 0;// param for cross zag
     float           infill_rotate_step         = 0; // param for zig zag to get cross texture
     bool            symmetric_infill_y_axis = false;
@@ -98,6 +101,7 @@ struct SurfaceFillParams
 		RETURN_COMPARE_NON_EQUAL(flow.nozzle_diameter());
 		RETURN_COMPARE_NON_EQUAL_TYPED(unsigned, bridge);
 		RETURN_COMPARE_NON_EQUAL_TYPED(unsigned, extrusion_role);
+		RETURN_COMPARE_NON_EQUAL(initial_layer_flow_ratio);
 		RETURN_COMPARE_NON_EQUAL(sparse_infill_speed);
 		RETURN_COMPARE_NON_EQUAL(top_surface_speed);
 		RETURN_COMPARE_NON_EQUAL(solid_infill_speed);
@@ -126,6 +130,7 @@ struct SurfaceFillParams
 				this->anchor_length_max == rhs.anchor_length_max &&
 				this->flow 				== rhs.flow 			&&
 				this->extrusion_role	== rhs.extrusion_role	&&
+				this->initial_layer_flow_ratio == rhs.initial_layer_flow_ratio &&
 				this->sparse_infill_speed	== rhs.sparse_infill_speed &&
 				this->top_surface_speed		== rhs.top_surface_speed &&
 				this->solid_infill_speed	== rhs.solid_infill_speed &&
@@ -198,6 +203,8 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 		        FlowRole extrusion_role = surface.is_top() ? frTopSolidInfill : (surface.is_solid() ? frSolidInfill : frInfill);
 		        bool     is_bridge 	    = layer.id() > 0 && surface.is_bridge();
 		        params.extruder 	 = layerm.region().extruder(extrusion_role);
+		        if (layer.id() == 0)
+		            params.initial_layer_flow_ratio = region_config.initial_layer_flow_ratio.value;
 		        params.pattern 		 = region_config.sparse_infill_pattern.value;
 		        params.density       = float(region_config.sparse_infill_density);
 				params.multiline	 = int(region_config.fill_multiline);
@@ -228,7 +235,7 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                         params.density = surface.is_top() ? region_config.top_surface_density.value : region_config.bottom_surface_density.value;
                     } else
 						params.pattern = region_config.top_surface_pattern == ipMonotonic ? ipMonotonic : ipRectilinear;
-
+                    if (params.pattern == ipMonotonicLine) params.monotonic_travel_into_wall = region_config.monotonic_travel_into_wall.value;
 		        } else if (params.density <= 0)
 		            continue;
 
@@ -255,20 +262,20 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 				//BBS: record speed params
                 if (!params.bridge) {
                     if (params.extrusion_role == erInternalInfill)
-                        params.sparse_infill_speed = region_config.sparse_infill_speed.get_at(layer.get_config_idx_for_filament(params.extruder));
+                        params.sparse_infill_speed = region_config.sparse_infill_speed.get_at(layer.get_process_config_idx(params.extruder));
                     else if (params.extrusion_role == erTopSolidInfill)
-                        params.top_surface_speed = region_config.top_surface_speed.get_at(layer.get_config_idx_for_filament(params.extruder));
+                        params.top_surface_speed = region_config.top_surface_speed.get_at(layer.get_process_config_idx(params.extruder));
                     else if (params.extrusion_role == erSolidInfill)
-                        params.solid_infill_speed = region_config.internal_solid_infill_speed.get_at(layer.get_config_idx_for_filament(params.extruder));
+                        params.solid_infill_speed = region_config.internal_solid_infill_speed.get_at(layer.get_process_config_idx(params.extruder));
 					else if (params.extrusion_role == erFloatingVerticalShell) {
                         int  filament_id               = region_config.sparse_infill_filament - 1;
                         bool use_filament_bridge_speed = layerm.layer()->object()->print()->config().filament_enable_overhang_speed.get_at(
-                            layer.get_config_idx_for_filament(filament_id));
+                            layer.get_filament_config_idx(filament_id));
 
                         if (use_filament_bridge_speed)
-                            params.solid_infill_speed = layerm.layer()->object()->print()->config().filament_bridge_speed.get_at(layer.get_config_idx_for_filament(filament_id));
+                            params.solid_infill_speed = layerm.layer()->object()->print()->config().filament_bridge_speed.get_at(layer.get_process_config_idx(filament_id));
                         else
-							params.solid_infill_speed = region_config.bridge_speed.get_at(layer.get_config_idx_for_filament(params.extruder));
+							params.solid_infill_speed = region_config.bridge_speed.get_at(layer.get_process_config_idx(params.extruder));
 					}
                 }
 				// Calculate flow spacing for infill pattern generation.
@@ -631,7 +638,7 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
 		}
 		else if (surface_fill.params.pattern == ipMonotonicLine){
 			FillMonotonicLineWGapFill* fill_monoline = dynamic_cast<FillMonotonicLineWGapFill*>(f.get());
-			fill_monoline->apply_gap_compensation = this->object()->print()->config().apply_top_surface_compensation;
+            fill_monoline->gap_compensation_ratio    = surface_fill.params.monotonic_travel_into_wall * (float) 0.01;
 		}
 		else if (surface_fill.params.pattern == ipFloatingConcentric) {
 			FillFloatingConcentric* fill_contour = dynamic_cast<FillFloatingConcentric*>(f.get());
@@ -850,6 +857,12 @@ Polylines Layer::generate_sparse_infill_polylines_for_anchoring(FillAdaptive::Oc
 		params.resolution = resolution;
 		params.use_arachne = false;
 		params.layer_height = layerm.layer()->height;
+
+		// Pass pattern-specific parameters so that anchoring lines match the actual infill.
+		if (surface_fill.params.pattern == ip2DLattice) {
+			params.lattice_angle_1 = surface_fill.params.lattice_angle_1;
+			params.lattice_angle_2 = surface_fill.params.lattice_angle_2;
+		}
 
 		for (ExPolygon& expoly : surface_fill.expolygons) {
 			// Spacing is modified by the filler to indicate adjustments. Reset it for each expolygon.

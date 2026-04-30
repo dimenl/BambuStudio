@@ -8,8 +8,6 @@
     ],
     "printer_variant": "0.4",
     "auxiliary_fan": "1",
-    "apply_top_surface_compensation": "0",
-    "fan_direction": "undefine",
     "best_object_pos": "0.5x0.5",
     "default_filament_profile": [],
     "default_print_profile": "0.16mm Optimal @BBL X1C",
@@ -111,6 +109,7 @@
     "nozzle_flush_dataset": [
         "0"
     ],
+    "print_in_clockwise": "0",
     "printable_height": "250",
     "printer_settings_id": "",
     "printer_structure": "corexy",

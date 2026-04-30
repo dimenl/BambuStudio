@@ -283,7 +283,7 @@ protected:
     std::vector<std::string> m_cache_options;
 
 
-	bool				m_page_switch_running = false;
+    bool				m_page_switch_running = false;
 	bool				m_page_switch_planned = false;
 
     bool				m_is_timelapse_wipe_tower_already_prompted = false;
@@ -373,8 +373,9 @@ public:
     void        update_extruder_switch_colors();
     void        update_all_extruder_options_status();
     void        check_extruder_options_status(int index, bool &sys_extruder, bool &modified_extruder, const std::vector<PageShp>& pages_to_check);
+    bool        disable_arc_fitting();
 
-	void		on_roll_back_value(const bool to_sys = false);
+    void		on_roll_back_value(const bool to_sys = false);
 
 	PageShp		add_options_page(const wxString& title, const std::string& icon, bool is_extruder_pages = false);
 	static wxString translate_category(const wxString& title, Preset::Type preset_type);
@@ -419,6 +420,12 @@ public:
     void			apply_searcher();
 	void			cache_config_diff(const std::vector<std::string>& selected_options);
 	void			apply_config_from_cache();
+
+private:
+    // when transfer modified options to a new printer, we may need do some work here
+    void remap_variant_cache();
+
+public:
     void            show_timelapse_warning_dialog();
 
 	const std::map<wxString, std::string>& get_category_icon_map() { return m_category_icon; }
@@ -504,6 +511,9 @@ public:
 
 	bool has_model_config() const { return !m_object_configs.empty(); }
 
+	// 获取对象配置映射，用于支撑参数推荐等场景
+	const std::map<ObjectBase *, ModelConfig *>& get_object_configs() const { return m_object_configs; }
+
 	void update_model_config();
 
 	virtual void reset_model_config();
@@ -540,6 +550,8 @@ public:
 	~TabPrintPlate() {}
 	void build() override;
 	void reset_model_config() override;
+	void update_bed_type_list();
+    void update_mixed_filament_seq_state();
 	int show_spiral_mode_settings_dialog(bool is_object_config) { return m_config_manipulation.show_spiral_mode_settings_dialog(is_object_config); }
 
 protected:
@@ -618,8 +630,11 @@ private:
 	ogStaticText*	m_fff_print_host_upload_description_line {nullptr};
 	ogStaticText*	m_sla_print_host_upload_description_line {nullptr};
 
-    std::vector<PageShp>			m_pages_fff;
-    std::vector<PageShp>			m_pages_sla;
+    std::vector<PageShp> m_pages_fff;
+    std::vector<PageShp> m_pages_sla;
+    std::vector<int> 	 m_extruder_type;
+    std::string          m_base_preset_name;
+    std::string          m_base_preset_model;
 
 public:
 	ScalableButton*	m_reset_to_filament_color = nullptr;
@@ -630,8 +645,6 @@ public:
 	size_t		m_sys_extruders_count;
 	size_t		m_cache_extruder_count = 0;
 	std::vector<std::string> m_extruder_variant_list;
-	std::string m_base_preset_name;
-	std::string m_base_preset_model;
 
     PrinterTechnology               m_printer_technology = ptFFF;
 
@@ -663,7 +676,7 @@ public:
 
 	wxSizer*	create_bed_shape_widget(wxWindow* parent);
 	void		cache_extruder_cnt();
-	bool		apply_extruder_cnt_from_cache();
+    bool        apply_extruder_cnt_from_cache();
 };
 
 class TabSLAMaterial : public Tab

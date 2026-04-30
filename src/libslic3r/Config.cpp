@@ -45,7 +45,7 @@ namespace Slic3r {
 //static const std::string CONFIG_INHERITS_KEY = "inherits";
 //static const std::string CONFIG_INSTANT_KEY = "instantiation";
 
-// Escape \n, \r and backslash
+// Escape \n, \r, quotes and backslash
 std::string escape_string_cstyle(const std::string &str)
 {
     // Allocate a buffer twice the input string length,
@@ -60,6 +60,9 @@ std::string escape_string_cstyle(const std::string &str)
         } else if (c == '\n') {
             (*outptr ++) = '\\';
             (*outptr ++) = 'n';
+        } else if (c == '"') {
+            (*outptr ++) = '\\';
+            (*outptr ++) = '"';
         } else if (c == '\\') {
             (*outptr ++) = '\\';
             (*outptr ++) = '\\';
@@ -119,7 +122,7 @@ std::string escape_strings_cstyle(const std::vector<std::string> &strs)
     return std::string(out.data(), outptr - out.data());
 }
 
-// Unescape \n, \r and backslash
+// Unescape \n, \r, quotes and backslash
 bool unescape_string_cstyle(const std::string &str, std::string &str_out)
 {
     std::vector<char> out(str.size(), 0);
@@ -300,17 +303,14 @@ ConfigOption* ConfigOptionDef::create_default_option() const
             return new ConfigOptionEnumGeneric(this->enum_keys_map, this->default_value->getInt());
 
         if (type == coEnums) {
-            auto dft = this->default_value->clone();
-            if (dft->nullable()) {
+            if (this->default_value->nullable()) {
                 ConfigOptionEnumsGenericNullable *opt = dynamic_cast<ConfigOptionEnumsGenericNullable *>(this->default_value->clone());
                 opt->keys_map = this->enum_keys_map;
                 return opt;
-            } else {
-                ConfigOptionEnumsGeneric *opt = dynamic_cast<ConfigOptionEnumsGeneric *>(this->default_value->clone());
-                opt->keys_map = this->enum_keys_map;
-                return opt;
             }
-            delete dft;
+            ConfigOptionEnumsGeneric *opt = dynamic_cast<ConfigOptionEnumsGeneric *>(this->default_value->clone());
+            opt->keys_map = this->enum_keys_map;
+            return opt;
         }
 
         return this->default_value->clone();
@@ -766,6 +766,14 @@ ConfigSubstitutions ConfigBase::load_string_map(std::map<std::string, std::strin
             // ignore
         }
     }
+    if (this->has("close_fan_the_first_x_layers") && !this->has("close_additional_fan_first_x_layers")) {
+        auto *src = this->option("close_fan_the_first_x_layers");
+        if (src) {
+            auto *dst = this->option("close_additional_fan_first_x_layers", true);
+            if (dst)
+                dst->set(src);
+        }
+    }
     return std::move(substitutions_ctxt.substitutions);
 }
 
@@ -910,6 +918,15 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
                 std::string value_str;
 
                 if (it.value().is_string()) {
+                    if (opt_key == "reduce_infill_retraction")
+                    {
+                        // Legacy bool: false(0) -> Disabled, true(1) bypass
+                        // New profiles that don't set this will get the default "Auto"
+                        if (it.value() == "0" || it.value() == "false") {
+                            // should disable
+                            different_settings_append.push_back("reduce_infill_retraction_mode");
+                        }
+                    }
                     //bool test1 = (it.key() == std::string("end_gcode"));
                     this->set_deserialize(opt_key, it.value(), substitution_context);
                     //some logic for special values
@@ -990,7 +1007,37 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
                 }
             }
         }
+
+        // Migrate: when opening old 3MF that has close_fan_the_first_x_layers but not
+        // close_additional_fan_first_x_layers, copy the value to the new key as well.
+        if (this->has("close_fan_the_first_x_layers") && !this->has("close_additional_fan_first_x_layers")) {
+            auto *src = this->option("close_fan_the_first_x_layers");
+            if (src) {
+                auto *dst = this->option("close_additional_fan_first_x_layers", true);
+                if (dst)
+                    dst->set(src);
+            }
+            if (this->has("different_settings_to_system")) {
+                auto *diff_opt = this->option<ConfigOptionStrings>("different_settings_to_system");
+                if (diff_opt) {
+                    for (auto &diff_str : diff_opt->values) {
+                        if (diff_str.find("close_fan_the_first_x_layers") != std::string::npos &&
+                            diff_str.find("close_additional_fan_first_x_layers") == std::string::npos) {
+                            diff_str += ";close_additional_fan_first_x_layers";
+                        }
+                    }
+                }
+            }
+        }
+
         if (!different_settings_append.empty()) {
+            auto it = std::find(different_settings_append.begin(), different_settings_append.end(), "reduce_infill_retraction_mode");
+            if (it != different_settings_append.end()){
+                //should disable
+                ConfigOptionEnum<ReduceInfillRetractionMode> *opt = this->option<ConfigOptionEnum<ReduceInfillRetractionMode>>("reduce_infill_retraction_mode", true);
+                opt->value                                        = ReduceInfillRetractionMode::rirDisabled;
+            }
+
             if (!new_support_style.empty()) {
                 ConfigOptionEnum<SupportMaterialStyle>* opt = this->option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true);
                 opt->value = smsTreeHybrid;

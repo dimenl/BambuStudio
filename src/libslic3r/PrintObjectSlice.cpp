@@ -795,7 +795,12 @@ void PrintObject::slice()
     //BBS: add flag to reload scene for shell rendering
     m_print->set_status(5, L("Slicing mesh"), PrintBase::SlicingStatus::RELOAD_SCENE);
     std::vector<coordf_t> layer_height_profile;
-    this->update_layer_height_profile(*this->model_object(), m_slicing_params, layer_height_profile);
+    bool nozzle_range_reset = false;
+    this->update_layer_height_profile(*this->model_object(), m_slicing_params, layer_height_profile, nozzle_range_reset);
+    if (nozzle_range_reset)
+        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+            L("The variable layer height profile has been reset because some layer heights "
+              "exceed the allowed range of the current nozzle."));
     m_print->throw_if_canceled();
     m_typed_slices = false;
     this->clear_layers();
@@ -1145,7 +1150,7 @@ void PrintObject::slice_volumes()
     // Is any ModelVolume MMU painted?
     if (const auto& volumes = this->model_object()->volumes;
         m_print->config().filament_diameter.size() > 1 && // BBS
-        std::find_if(volumes.begin(), volumes.end(), [](const ModelVolume* v) { return !v->mmu_segmentation_facets.empty(); }) != volumes.end()) {
+        std::find_if(volumes.begin(), volumes.end(), [](const ModelVolume *v) { return v->is_model_part() && !v->mmu_segmentation_facets.empty(); }) != volumes.end()) {
 
         // If XY Size compensation is also enabled, notify the user that XY Size compensation
         // would not be used because the object is multi-material painted.
@@ -1261,15 +1266,16 @@ void PrintObject::slice_volumes()
                             }
 	                    }
 	                } else {
-                        float max_growth = std::max(xy_hole_scaled, xy_contour_scaled);
-                        float min_growth = std::min(xy_hole_scaled, xy_contour_scaled);
+                        float max_growth = std::max(-xy_hole_scaled, xy_contour_scaled);
+                        float min_growth = std::min(-xy_hole_scaled, xy_contour_scaled);
+                        // for hole, positive xy_hole means increase hole and shrink expolygon
                         ExPolygons merged_poly_for_holes_growing;
                         if (max_growth > 0) {
                             //BBS: merge polygons because region can cut "holes".
                             //Then, cut them to give them again later to their region
                             merged_poly_for_holes_growing = layer->merged(float(SCALED_EPSILON));
                             merged_poly_for_holes_growing = _shrink_contour_holes(std::max(0.f, xy_contour_scaled),
-                                                                                  std::max(0.f, xy_hole_scaled),
+                                                                                  std::min(0.f, xy_hole_scaled),// negetative offset expand expolygons
                                                                                   union_ex(merged_poly_for_holes_growing));
 
                             // BBS: clipping regions, priority is given to the first regions.
@@ -1302,7 +1308,7 @@ void PrintObject::slice_volumes()
                             }
                             if (min_growth < 0.0f)
                                 trimming = _shrink_contour_holes(std::min(0.f, xy_contour_scaled),
-                                                                 std::min(0.f, xy_hole_scaled),
+                                                                 std::max(0.f, xy_hole_scaled),//positive xy_hole means shrink
                                                                  trimming);
                             //BBS: trim surfaces
                             for (size_t region_id = 0; region_id < layer->regions().size(); ++region_id) {

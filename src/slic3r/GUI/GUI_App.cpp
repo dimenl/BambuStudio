@@ -3,6 +3,7 @@
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
+#include "slic3r/GUI/DeviceWeb/DeviceWebPage.hpp"
 #include "slic3r/GUI/UserManager.hpp"
 #include "slic3r/GUI/TaskManager.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
@@ -1142,13 +1143,7 @@ void GUI_App::post_init()
                 download_url = input_str;
             }
 #endif
-            try
-            {
-                //filter relative directories
-                std::regex pattern("\\.\\.[\\/\\\\]|\\.\\.[\\/\\\\][\\/\\\\]|\\.\\/[\\/\\\\]|\\.[\\/\\\\]");
-                download_url = std::regex_replace(download_url, pattern, "");
-            }
-            catch (...){}
+            download_url = sanitize_download_url(download_url);
 
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", download_url %1%") % PathSanitizer::sanitize(download_url);
 
@@ -2497,14 +2492,21 @@ void GUI_App::init_app_config()
 #endif
             //BBS create folder if not exists
             boost::filesystem::path data_dir_path(data_dir);
+            boost::filesystem::path log_dir_path = data_dir_path / "log";
             if (!boost::filesystem::exists(data_dir_path))
-                boost::filesystem::create_directory(data_dir_path);
+                boost::filesystem::create_directories(data_dir_path);
+            if (!boost::filesystem::exists(log_dir_path))
+                boost::filesystem::create_directories(log_dir_path);
             set_data_dir(data_dir);
 #if defined(__WINDOWS__)
             // Change current dirtory of application
-            _chdir(encode_path((data_dir + "/log").c_str()).c_str());
+            if (_chdir(encode_path((data_dir + "/log").c_str()).c_str()) != 0) {
+                printf("%s, warning: chdir to log folder failed: %s\n", __FUNCTION__, (data_dir + "/log").c_str());
+            }
 #else
-            chdir(encode_path((data_dir + "/log").c_str()).c_str());
+            if (chdir(encode_path((data_dir + "/log").c_str()).c_str()) != 0) {
+                printf("%s, warning: chdir to log folder failed: %s\n", __FUNCTION__, (data_dir + "/log").c_str());
+            }
 #endif
     } else {
         m_datadir_redefined = true;
@@ -2748,6 +2750,32 @@ int GUI_App::OnExit()
 
     stop_sync_user_preset();
 
+    if (m_fila_manager_cloud_disp) {
+        delete m_fila_manager_cloud_disp;
+        m_fila_manager_cloud_disp = nullptr;
+    }
+
+    if (m_fila_manager_cloud_sync) {
+        delete m_fila_manager_cloud_sync;
+        m_fila_manager_cloud_sync = nullptr;
+    }
+
+    if (m_fila_manager_cloud_client) {
+        delete m_fila_manager_cloud_client;
+        m_fila_manager_cloud_client = nullptr;
+    }
+
+    if (m_fila_manager_sync) {
+        delete m_fila_manager_sync;
+        m_fila_manager_sync = nullptr;
+    }
+
+    if (m_fila_manager_store) {
+        m_fila_manager_store->save();
+        delete m_fila_manager_store;
+        m_fila_manager_store = nullptr;
+    }
+
     if (m_device_manager) {
         delete m_device_manager;
         m_device_manager = nullptr;
@@ -2767,7 +2795,41 @@ int GUI_App::OnExit()
         m_agent = nullptr;
     }
 
+#if !BBL_RELEASE_TO_PUBLIC
+    m_fila_debug_sink = nullptr;
+#endif
+
     return wxApp::OnExit();
+}
+
+void GUI_App::emit_fila_debug_log(const std::string& category,
+                                  const std::string& level,
+                                  const std::string& title,
+                                  const std::string& summary,
+                                  const nlohmann::json& detail)
+{
+#if !BBL_RELEASE_TO_PUBLIC
+    if (!m_fila_debug_sink)
+        return;
+
+    nlohmann::json payload = {
+        {"category", category},
+        {"level",    level},
+        {"title",    title},
+        {"summary",  summary},
+        {"detail",   detail},
+        {"ts",       static_cast<std::uint64_t>(
+                         std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::system_clock::now().time_since_epoch()).count())}
+    };
+    m_fila_debug_sink(payload);
+#else
+    (void)category;
+    (void)level;
+    (void)title;
+    (void)summary;
+    (void)detail;
+#endif
 }
 
 class wxBoostLog : public wxLog
@@ -2838,10 +2900,10 @@ bool GUI_App::on_init_inner()
     g_object_set (gtk_settings_get_default (), "gtk-menu-images", TRUE, NULL);
 #endif
 
-#ifdef WIN32
+//#ifdef WIN32
     //BBS set crash log folder
     //CBaseException::set_log_folder(data_dir());
-#endif
+// #endif
 
     wxGetApp().Bind(wxEVT_QUERY_END_SESSION, [this](auto & e) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< "received wxEVT_QUERY_END_SESSION";
@@ -3209,6 +3271,32 @@ bool GUI_App::on_init_inner()
 
     // Let the libslic3r know the callback, which will translate messages on demand.
     Slic3r::I18N::set_translate_callback(libslic3r_translate_callback);
+
+    // Initialize Filament Manager store & sync
+    if (!m_fila_manager_store) {
+        m_fila_manager_store = new wgtFilaManagerStore();
+        m_fila_manager_store->load();
+        BOOST_LOG_TRIVIAL(info) << "Filament Manager store initialized";
+    }
+    if (!m_fila_manager_sync) {
+        m_fila_manager_sync = new wgtFilaManagerSync(m_fila_manager_store);
+        BOOST_LOG_TRIVIAL(info) << "Filament Manager sync initialized";
+    }
+    // Cloud layer — owns HTTP client, high-level sync and the serialization dispatcher.
+    if (!m_fila_manager_cloud_client) {
+        m_fila_manager_cloud_client = new wgtFilaManagerCloudClient();
+        BOOST_LOG_TRIVIAL(info) << "Filament Manager cloud client initialized";
+    }
+    if (!m_fila_manager_cloud_sync) {
+        m_fila_manager_cloud_sync = new wgtFilaManagerCloudSync(m_fila_manager_store,
+                                                                m_fila_manager_cloud_client);
+        BOOST_LOG_TRIVIAL(info) << "Filament Manager cloud sync initialized";
+    }
+    if (!m_fila_manager_cloud_disp) {
+        m_fila_manager_cloud_disp = new wgtFilaManagerCloudDispatcher(m_fila_manager_cloud_sync,
+                                                                     m_fila_manager_cloud_client);
+        BOOST_LOG_TRIVIAL(info) << "Filament Manager cloud dispatcher initialized";
+    }
 
     BOOST_LOG_TRIVIAL(info) << "create the main window";
     mainframe = new MainFrame();
@@ -4170,7 +4258,7 @@ void GUI_App::request_helio_supported_data()
     std::string helio_api_url = Slic3r::HelioQuery::get_helio_api_url();
     std::string helio_api_key = Slic3r::HelioQuery::get_helio_pat();
 
-    if (HelioQuery::global_supported_printers.size() <= 0 || HelioQuery::global_supported_materials.size() <= 0) {
+    if (!HelioQuery::global_printers_fully_loaded || !HelioQuery::global_materials_fully_loaded) {
         Slic3r::HelioQuery::request_all_support_machine(helio_api_url, helio_api_key);
         Slic3r::HelioQuery::request_all_support_materials(helio_api_url, helio_api_key);
     }
@@ -4315,11 +4403,16 @@ void GUI_App::load_gcode(wxWindow* parent, wxString& input_file) const
         input_file = dialog.GetPath();
 }
 
-wxString GUI_App::transition_tridid(int trid_id) const
+wxString GUI_App::transition_tridid(int trid_id, std::optional<int> total_extruder_count) const
 {
-    if (trid_id == VIRTUAL_TRAY_MAIN_ID || trid_id == VIRTUAL_TRAY_DEPUTY_ID)
-    {
-        assert(0);
+    if (trid_id == VIRTUAL_TRAY_MAIN_ID || trid_id == VIRTUAL_TRAY_DEPUTY_ID) {
+        if (total_extruder_count.value_or(-1) == 2) {
+            if (trid_id == VIRTUAL_TRAY_MAIN_ID) {
+                return wxString("Ext-R");
+            } else {
+                return wxString("Ext-L");
+            }
+        }
         return wxString("Ext");
     }
 
@@ -4432,6 +4525,14 @@ void GUI_App::request_user_logout()
         mainframe->update_side_preset_ui();
 
         GUI::wxGetApp().stop_sync_user_preset();
+
+        // Drop queued cloud ops so they don't fire against a stale user.
+        if (m_fila_manager_cloud_disp) {
+            m_fila_manager_cloud_disp->clear_pending();
+        }
+        if (mainframe && mainframe->web_device()) {
+            mainframe->web_device()->NotifyFilamentSessionState();
+        }
     }
 }
 
@@ -4863,6 +4964,15 @@ void GUI_App::request_model_download(wxString url)
     }
 }
 
+std::string GUI_App::sanitize_download_url(const std::string &url)
+{
+    try {
+        std::regex pattern("\\.\\.[\\/\\\\]|\\.\\.[\\/\\\\][\\/\\\\]|\\.\\/[\\/\\\\]|\\.[\\/\\\\]");
+        return std::regex_replace(url, pattern, "");
+    } catch (...) {}
+    return url;
+}
+
 //BBS download project by project id
 void GUI_App::download_project(std::string project_id)
 {
@@ -5070,6 +5180,15 @@ void GUI_App::on_user_login_handle(wxCommandEvent &evt)
         mainframe->update_side_preset_ui();
 
         GUI::wxGetApp().mainframe->show_sync_dialog();
+
+        // Trigger filament-manager cloud pull on the dispatcher queue; no-op if
+        // already pulling.  Runs after login so auth token is available.
+        if (m_fila_manager_cloud_disp) {
+            m_fila_manager_cloud_disp->enqueue_pull();
+        }
+        if (mainframe && mainframe->web_device()) {
+            mainframe->web_device()->NotifyFilamentSessionState();
+        }
     }
 }
 
@@ -6697,6 +6816,7 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
         // so we put it into an inner scope
         PreferencesDialog dlg(mainframe, open_on_tab, highlight_option);
         dlg.ShowModal();
+
         // BBS
         //app_layout_changed = dlg.settings_layout_changed();
 #if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
@@ -6721,6 +6841,15 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
                 associate_files(L"gcode");
         }
 #endif // _WIN32
+
+        // Refresh the recent projects list if time format changed
+        if (dlg.use_12h_time_format_changed() && mainframe && mainframe->m_webview) {
+            CallAfter([mainframe = this->mainframe]() {
+                if (mainframe && mainframe->m_webview) {
+                    mainframe->m_webview->SendRecentList(-1);
+                }
+            });
+        }
     }
 
     // BBS
@@ -7119,7 +7248,21 @@ void GUI_App::MacOpenURL(const wxString& url)
             if (!input_str.empty()) download_origin_url = input_str;
         }
 
-        std::string download_file_url = url_decode(download_origin_url);
+        std::string decoded_url = url_decode(download_origin_url);
+        std::string download_file_url;
+#if BBL_RELEASE_TO_PUBLIC
+        if (boost::starts_with(decoded_url, "http://makerworld") || boost::starts_with(decoded_url, "https://makerworld") ||
+            boost::starts_with(decoded_url, "http://public-cdn.bblmw.com") || boost::starts_with(decoded_url, "https://public-cdn.bblmw.com") ||
+            boost::algorithm::contains(decoded_url, "amazonaws.com") || boost::algorithm::contains(decoded_url, "aliyuncs.com")) {
+            download_file_url = decoded_url;
+        } else {
+            MessageDialog msg_dlg(nullptr, _L("This file is not from a trusted site, do you want to open it anyway?"), "", wxAPPLY | wxYES_NO);
+            if (msg_dlg.ShowModal() == wxID_YES) download_file_url = decoded_url;
+        }
+#else
+        download_file_url = decoded_url;
+#endif
+        download_file_url = sanitize_download_url(download_file_url);
 
 #if !BBL_RELEASE_TO_PUBLIC
         BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << download_file_url;

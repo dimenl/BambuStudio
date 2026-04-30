@@ -38,9 +38,6 @@
         "0.9",
         "0.9"
     ],
-    "filament_printable": [
-        "2"
-    ],
     "filament_retraction_length": [
         "2",
         "2"
@@ -83,6 +80,10 @@
     ],
     "filament_change_length_nc": [
         "4"
+    ],
+    "filament_preheat_temperature_delta": [
+        "20",
+        "20"
     ],
     "include": [
         "fdm_filament_template_direct_dual"

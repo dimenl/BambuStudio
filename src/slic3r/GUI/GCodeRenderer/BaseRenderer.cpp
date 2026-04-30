@@ -5,6 +5,8 @@
 #include "slic3r/GUI/MsgDialog.hpp"
 #include "slic3r/GUI/FilamentGroupPopup.hpp"
 #include "slic3r/GUI/GLToolbar.hpp"
+#include "slic3r/GUI/DeviceCore/DevUtilBackend.h"
+#include "../DeviceCore/DevConfigUtil.h"
 #include "libslic3r/Print.hpp"
 #include "../Utils/HelioDragon.hpp"
 #include <imgui/imgui_internal.h>
@@ -25,6 +27,8 @@ namespace
             return _u8L("Speed");
         else if (view_type == Slic3r::GUI::gcode::EViewType::FanSpeed)
             return _u8L("Fan Speed");
+        else if (view_type == Slic3r::GUI::gcode::EViewType::AdditionalFanSpeed)
+            return _u8L("AUX Fan Speed");
         else if (view_type == Slic3r::GUI::gcode::EViewType::Temperature)
             return _u8L("Temperature");
         else if (view_type == Slic3r::GUI::gcode::EViewType::VolumetricRate)
@@ -1140,6 +1144,7 @@ namespace Slic3r
                 m_ssid_to_moveid_map.shrink_to_fit();
                 m_plater_extruder.clear();
                 m_contained_in_bed = true;
+                m_config = nullptr;
 
                 if (m_p_extrusions) {
                     m_p_extrusions->reset_ranges();
@@ -1206,6 +1211,7 @@ namespace Slic3r
                                 m_p_extrusions->ranges.width.update_from(round_to_bin(curr.width));
                             }// prevent the start code extrude extreme height/width and make the range deviate from the normal range
                             m_p_extrusions->ranges.fan_speed.update_from(curr.fan_speed);
+                            m_p_extrusions->ranges.additional_fan_speed.update_from(curr.additional_fan_speed);
                             m_p_extrusions->ranges.temperature.update_from(curr.temperature);
                             if (curr.extrusion_role != erCustom || is_extrusion_role_visible(ExtrusionRole::erCustom))
                                 m_p_extrusions->ranges.volumetric_rate.update_from(round_to_bin(curr.volumetric_rate()));
@@ -1330,6 +1336,9 @@ namespace Slic3r
                 if (!m_legend_enabled)
                     return;
                 const Size cnv_size = wxGetApp().plater()->get_current_canvas3D()->get_canvas_size();
+                auto group_result = DevUtilBackend::GetNozzleGroupResult(wxGetApp().plater());
+                bool is_support_dynamic_nozzle_map = group_result && group_result->is_support_dynamic_nozzle_map();
+                bool is_show_left_right_result = is_support_dynamic_nozzle_map && wxGetApp().sidebar().is_fila_switch_ready();
                 ImGuiWrapper& imgui = *wxGetApp().imgui();
                 //BBS: GUI refactor: move to the right
                 imgui.set_next_window_pos(float(canvas_width - right_margin * m_scale), 0.0f, ImGuiCond_Always, 1.0f, 0.0f);
@@ -1580,7 +1589,39 @@ namespace Slic3r
                                                       volume * m_filament_densities[extruder_id] * 0.001 };
                     return ret;
                     };
-                // BBS Slicing Result title
+                auto get_nozzle_label = [](const std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> &group_result, int filament_id) -> std::string {
+                    if (!group_result) {
+                        return "";
+                    }
+                    auto nozzles = group_result->get_nozzles_for_filament(filament_id);
+                    if (nozzles.empty()) {
+                        return "";
+                    }
+                    Preset& cur_preset = wxGetApp().preset_bundle->printers.get_selected_preset();
+                    auto extruder_max_nozzle_count = cur_preset.config.option<ConfigOptionIntsNullable>("extruder_max_nozzle_count")->values;
+                    bool support_multi_nozzle      = std::any_of(extruder_max_nozzle_count.begin(), extruder_max_nozzle_count.end(), [](int val) { return val > 1; });
+                    std::vector<std::string> nozzle_labels;
+                    for (const auto& nozzle : nozzles) {
+                        std::string label;
+                        if (nozzle.extruder_id == 0) {
+                            label = "L";
+                        } else if (nozzle.extruder_id == 1) {
+                            label = "R";
+                            if (support_multi_nozzle) {
+                                label += std::to_string(nozzle.group_id);
+                            }
+                        }
+                        nozzle_labels.push_back(label);
+                    }
+                    std::string result;
+                    for (int i = 0; i < nozzle_labels.size(); ++i) {
+                        if (i > 0) result += ", ";
+                        result += nozzle_labels[i];
+                    }
+                    return result;
+
+                    };
+                //BBS Slicing Result title
                 ImGui::Dummy({ window_padding, window_padding });
                 ImGui::Dummy({ window_padding, window_padding });
                 ImGui::SameLine();
@@ -1649,25 +1690,31 @@ namespace Slic3r
                     const_cast<GCodeProcessorResult*>(m_gcode_result)->update_imgui_flag = false;
                 }
                 push_combo_style();
+
+                auto       *preset_bundle             = wxGetApp().preset_bundle;
+                const bool  is_bbl_vendor_preset      = preset_bundle != nullptr && preset_bundle->printers.get_edited_preset().is_bbl_vendor_preset(preset_bundle);
+                const auto *printer_model             = wxGetApp().plater()->get_curr_printer_model();
+                const bool  hide_additional_fan_speed = !is_bbl_vendor_preset || (printer_model != nullptr && printer_model->support_side_panel_fan == "false");
+                if (hide_additional_fan_speed && view_type_items[m_view_type_sel] == EViewType::AdditionalFanSpeed) {
+                    for (int i = 0; i < view_type_items.size(); ++i) {
+                        if (view_type_items[i] == EViewType::FeatureType) {
+                            apply_view_type_selection(i, EViewType::FeatureType);
+                            break;
+                        }
+                    }
+                }
                 ImGuiComboFlags flags = 0;
                 const char* view_type_value = view_type_image_names[m_view_type_sel].option_name.c_str();
                 if (ImGui::BBLBeginCombo("", view_type_value, flags)) {
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
                     for (int i = 0; i < view_type_image_names.size(); i++) {
                         const bool is_selected = (m_view_type_sel == i);
+                        if (hide_additional_fan_speed && view_type_items[i] == EViewType::AdditionalFanSpeed) {
+                            continue;
+                        }
                         if (ImGui::BBLSelectable_LeftImage(view_type_image_names[i].option_name.c_str(), is_selected, view_type_image_names[i].texture_id)) {
                             m_fold = false;
-                            m_view_type_sel = i;
-                            if (!is_helio_option()) {
-                                m_last_non_helio_option_item = i;
-                                record_gcodeviewer_option_item();
-                            }
-                            set_view_type(view_type_items[m_view_type_sel]);
-                            reset_visible(view_type_items[m_view_type_sel]);
-                            // update buffers' render paths
-                            refresh_render_paths();
-                            update_moves_slider();
-                            wxGetApp().plater()->get_current_canvas3D()->set_as_dirty();
+                            apply_view_type_selection(i, view_type_items[i]);
                         }
                         if (is_selected) {
                             ImGui::SetItemDefaultFocus();
@@ -1823,6 +1870,7 @@ namespace Slic3r
                 case EViewType::Width: { imgui.title(_u8L("Line Width (mm)")); break; }
                 case EViewType::Feedrate: { imgui.title(_u8L("Speed (mm/s)")); break; }
                 case EViewType::FanSpeed: { imgui.title(_u8L("Fan Speed (%)")); break; }
+                case EViewType::AdditionalFanSpeed: { imgui.title(_u8L("AUX  Fan Speed (%)")); break; }
                 case EViewType::Temperature: { imgui.title(_u8L("Temperature (°C)")); break; }
                 case EViewType::VolumetricRate: { imgui.title(_u8L("Volumetric flow rate (mm³/s)")); break; }
                 case EViewType::LayerTime: { imgui.title(_u8L("Layer Time")); break; }
@@ -1863,6 +1911,9 @@ namespace Slic3r
                     }
                     if ((displayed_columns & ~ColumnData::Model) > 0) {
                         title_columns.push_back({ _u8L("Total"), total_filaments });
+                    }
+                    if (is_show_left_right_result) {
+                        title_columns.push_back({ _u8L("Nozzles"), {""} });
                     }
                     auto offsets_ = calculate_offsets(title_columns, icon_size);
                     std::vector<std::pair<std::string, float>> title_offsets;
@@ -1965,6 +2016,7 @@ namespace Slic3r
                     break;
                 }
                 case EViewType::FanSpeed: { append_range(m_p_extrusions->ranges.fan_speed, 0); break; }
+                case EViewType::AdditionalFanSpeed: { append_range(m_p_extrusions->ranges.additional_fan_speed, 0); break; }
                 case EViewType::Temperature: { append_range(m_p_extrusions->ranges.temperature, 0); break; }
                 case EViewType::LayerTime: { append_range(m_p_extrusions->ranges.layer_duration, 1); break; }
                 case EViewType::VolumetricRate: { append_range(m_p_extrusions->ranges.volumetric_rate, 2); break; }
@@ -2054,6 +2106,11 @@ namespace Slic3r
                                 ::sprintf(buf, imperial_units ? "%.2f in\n%.2f oz" : "%.2f m\n%.2f g", column_sum_m, column_sum_g / unit_conver);
                                 columns_offsets.push_back({ buf, color_print_offsets[_u8L("Total")] });
                             }
+                            if (is_show_left_right_result) {
+                                std::string nozzle_str   = get_nozzle_label(group_result, static_cast<int>(extruder_idx));
+                                ::sprintf(buf, "%s", nozzle_str.c_str());
+                                columns_offsets.push_back({buf, color_print_offsets[_u8L("Nozzles")]});
+                            }
                             append_item(EItemType::Rect, m_tools.m_tool_colors[extruder_idx], columns_offsets, false, filament_visible, [this, extruder_idx]() {
                                 m_tools.m_tool_visibles[extruder_idx] = !m_tools.m_tool_visibles[extruder_idx];
                                 on_visibility_changed();
@@ -2105,7 +2162,7 @@ namespace Slic3r
                     ImGui::SameLine();
                     imgui.text(_u8L("Filament change times") + ":");
                     ImGui::SameLine();
-                    ::sprintf(buf, "%d", m_print_statistics.total_filament_changes + m_print_statistics.total_extruder_changes + m_print_statistics.total_nozzle_changes);
+                    ::sprintf(buf, "%d", m_print_statistics.total_filament_changes);
                     imgui.text(buf);
                     //BBS display cost
                     ImGui::Dummy({ window_padding, window_padding });
@@ -2117,8 +2174,8 @@ namespace Slic3r
                     break;
                 }
                 // helio
-                case EViewType::ThermalIndexMin: 
-                case EViewType::ThermalIndexMax: 
+                case EViewType::ThermalIndexMin:
+                case EViewType::ThermalIndexMax:
                 case EViewType::ThermalIndexMean: {
                     if (m_view_type == EViewType::ThermalIndexMin)
                         append_range(m_p_extrusions->ranges.thermal_index_min, 0);
@@ -2126,13 +2183,13 @@ namespace Slic3r
                         append_range(m_p_extrusions->ranges.thermal_index_max, 0);
                     else
                         append_range(m_p_extrusions->ranges.thermal_index_mean, 0);
-                    
+
                     // Add "View Summary" link only if simulation/optimization result is available
                     if (wxGetApp().plater()->has_helio_simulation_result()) {
                         ImGui::Spacing();
                         ImGui::Dummy({ window_padding, window_padding });
                         ImGui::SameLine();
-                        
+
                         // Render as hyperlink with green color and underline
                         std::string label = _u8L("View Summary");
                         ImColor HyperColor = ImColor(0, 174, 66, 255).Value;
@@ -2587,7 +2644,7 @@ namespace Slic3r
                 }
                 ImGui::Dummy({ window_padding, window_padding });
                 if (m_nozzle_nums > 1)
-                    render_legend_color_arr_recommen(window_padding);
+                    render_legend_color_arr_recommen(window_padding, is_show_left_right_result);
                 legend_height = ImGui::GetCurrentWindow()->Size.y;
                 imgui.end();
                 ImGui::PopStyleColor(7);
@@ -2610,7 +2667,7 @@ namespace Slic3r
                 }
             }
 
-            void BaseRenderer::render_legend_color_arr_recommen(float window_padding)
+            void BaseRenderer::render_legend_color_arr_recommen(float window_padding, bool is_show_left_right_result)
             {
                 ImGuiWrapper& imgui = *wxGetApp().imgui();
                 auto link_text = [&](const std::string& label) {
@@ -2687,8 +2744,8 @@ namespace Slic3r
                 auto stats_by_extruder = wxGetApp().plater()->get_partplate_list().get_current_fff_print().statistics_by_extruder();
                 float delta_weight_to_single_ext = stats_by_extruder.stats_by_single_extruder.filament_flush_weight - stats_by_extruder.stats_by_multi_extruder_curr.filament_flush_weight;
                 float delta_weight_to_best = stats_by_extruder.stats_by_multi_extruder_curr.filament_flush_weight - stats_by_extruder.stats_by_multi_extruder_best.filament_flush_weight;
-                int   delta_change_to_single_ext = stats_by_extruder.stats_by_single_extruder.filament_change_count - stats_by_extruder.stats_by_multi_extruder_curr.filament_change_count;
-                int   delta_change_to_best = stats_by_extruder.stats_by_multi_extruder_curr.filament_change_count - stats_by_extruder.stats_by_multi_extruder_best.filament_change_count;
+                int   delta_change_to_single_ext = stats_by_extruder.stats_by_single_extruder.flush_filament_change_count - stats_by_extruder.stats_by_multi_extruder_curr.flush_filament_change_count;
+                int   delta_change_to_best = stats_by_extruder.stats_by_multi_extruder_curr.flush_filament_change_count - stats_by_extruder.stats_by_multi_extruder_best.flush_filament_change_count;
                 bool any_less_to_single_ext = delta_weight_to_single_ext > EPSILON || delta_change_to_single_ext > 0;
                 bool any_more_to_best = delta_weight_to_best > EPSILON || delta_change_to_best > 0;
                 bool all_less_to_single_ext = delta_weight_to_single_ext > EPSILON && delta_change_to_single_ext > 0;
@@ -2735,62 +2792,71 @@ namespace Slic3r
                 }
                 else
                     tips_count = 5;
-                float AMS_container_height = ams_item_height + line_height * tips_count + line_height / 2;
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.f, 1.f, 1.f, 1.0f));
+                float AMS_container_height = is_show_left_right_result ? line_height * (tips_count - 3) + line_height / 2 :
+                                                                    ams_item_height + line_height * tips_count + line_height / 2;
+                is_show_left_right_result ? ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.3f, 0.3f, 0.3f, 0.1f)) :
+                                       ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.f, 1.f, 1.f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(.15f, .18f, .19f, 1.0f));
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(window_padding * 3, 0));
                 // ImGui::Dummy({window_padding, window_padding});
                 ImGui::BeginChild("#AMS", ImVec2(0, AMS_container_height), true, ImGuiWindowFlags_AlwaysUseWindowPadding);
                 {
-                    float available_width = ImGui::GetContentRegionAvail().x;
-                    float half_width = available_width * 0.49f;
-                    float spacing = 18.0f * m_scale;
-                    ImGui::Dummy({ window_padding, window_padding });
-                    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(.8f, .8f, .8f, 1.0f));
-                    imgui.bold_text(_u8L("Filament Grouping"));
-                    ImGui::SameLine();
-                    std::string tip_str = _u8L("Why this grouping");
-                    ImGui::SetCursorPosX(ImGui::GetWindowContentRegionWidth() - window_padding - ImGui::CalcTextSize(tip_str.c_str()).x);
-                    link_filament_group_wiki(tip_str);
-                    ImGui::Separator();
-                    ImGui::PopStyleColor();
-                    ImGui::Dummy({ window_padding, window_padding });
-                    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.00f, 0.00f, 0.00f, 0.1f));
-                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(window_padding * 2, window_padding));
-                    ImDrawList* child_begin_draw_list = ImGui::GetWindowDrawList();
-                    ImVec2      cursor_pos = ImGui::GetCursorScreenPos();
-                    child_begin_draw_list->AddRectFilled(cursor_pos, ImVec2(cursor_pos.x + half_width, cursor_pos.y + line_height), IM_COL32(0, 0, 0, 20));
-                    ImGui::BeginChild("#LeftAMS", ImVec2(half_width, ams_item_height), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
-                    {
-                        imgui.text(_u8L("Left nozzle"));
+                    if (!is_show_left_right_result) {
+                        float available_width = ImGui::GetContentRegionAvail().x;
+                        float half_width      = available_width * 0.49f;
+                        float spacing         = 18.0f * m_scale;
                         ImGui::Dummy({ window_padding, window_padding });
-                        int index = 1;
-                        for (const auto& extruder_filament : m_left_extruder_filament) {
-                            imgui.filament_group(get_filament_display_type(extruder_filament), extruder_filament.hex_color.c_str(), extruder_filament.filament_id, filament_group_item_align_width);
-                            if (index % 4 != 0) { ImGui::SameLine(0, spacing); }
-                            index++;
-                        }
-                        ImGui::EndChild();
-                    }
-                    ImGui::SameLine();
-                    cursor_pos = ImGui::GetCursorScreenPos();
-                    child_begin_draw_list->AddRectFilled(cursor_pos, ImVec2(cursor_pos.x + half_width, cursor_pos.y + line_height), IM_COL32(0, 0, 0, 20));
-                    ImGui::BeginChild("#RightAMS", ImVec2(half_width, ams_item_height), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
-                    {
-                        imgui.text(_u8L("Right nozzle"));
+                        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(.8f, .8f, .8f, 1.0f));
+                        imgui.bold_text(_u8L("Filament Grouping"));
+                        ImGui::SameLine();
+                        std::string tip_str = _u8L("Why this grouping");
+                        ImGui::SetCursorPosX(ImGui::GetWindowContentRegionWidth() - window_padding - ImGui::CalcTextSize(tip_str.c_str()).x);
+                        link_filament_group_wiki(tip_str);
+                        ImGui::Separator();
+                        ImGui::PopStyleColor();
                         ImGui::Dummy({ window_padding, window_padding });
-                        int index = 1;
-                        for (const auto& extruder_filament : m_right_extruder_filament) {
-                            imgui.filament_group(get_filament_display_type(extruder_filament), extruder_filament.hex_color.c_str(), extruder_filament.filament_id, filament_group_item_align_width);
-                            if (index % 4 != 0) { ImGui::SameLine(0, spacing); }
-                            index++;
+                        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.00f, 0.00f, 0.00f, 0.1f));
+                        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(window_padding * 2, window_padding));
+                        ImDrawList *child_begin_draw_list = ImGui::GetWindowDrawList();
+                        ImVec2      cursor_pos            = ImGui::GetCursorScreenPos();
+                        child_begin_draw_list->AddRectFilled(cursor_pos, ImVec2(cursor_pos.x + half_width, cursor_pos.y + line_height), IM_COL32(0, 0, 0, 20));
+                        std::string br_pt = wxGetApp().preset_bundle->printers.get_edited_preset().get_printer_type(wxGetApp().preset_bundle);
+                        ImGui::BeginChild("#LeftAMS", ImVec2(half_width, ams_item_height), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
+                        {
+                            std::string br_dep_nz = DevPrinterConfigUtil::get_toolhead_display_name(br_pt, DEPUTY_EXTRUDER_ID, ToolHeadComponent::Nozzle, ToolHeadNameCase::SentenceCase);
+                            imgui.text(_u8L(br_dep_nz.c_str()));
+                            ImGui::Dummy({window_padding, window_padding});
+                            int index = 1;
+                            for (const auto &extruder_filament : m_left_extruder_filament) {
+                                imgui.filament_group(get_filament_display_type(extruder_filament), extruder_filament.hex_color.c_str(), extruder_filament.filament_id,
+                                                     filament_group_item_align_width);
+                                if (index % 4 != 0) { ImGui::SameLine(0, spacing); }
+                                index++;
+                            }
+                            ImGui::EndChild();
                         }
-                        ImGui::EndChild();
+                        ImGui::SameLine();
+                        cursor_pos = ImGui::GetCursorScreenPos();
+                        child_begin_draw_list->AddRectFilled(cursor_pos, ImVec2(cursor_pos.x + half_width, cursor_pos.y + line_height), IM_COL32(0, 0, 0, 20));
+                        ImGui::BeginChild("#RightAMS", ImVec2(half_width, ams_item_height), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
+                        {
+                            std::string br_main_nz = DevPrinterConfigUtil::get_toolhead_display_name(br_pt, MAIN_EXTRUDER_ID, ToolHeadComponent::Nozzle, ToolHeadNameCase::SentenceCase);
+                            imgui.text(_u8L(br_main_nz.c_str()));
+                            ImGui::Dummy({window_padding, window_padding});
+                            int index = 1;
+                            for (const auto &extruder_filament : m_right_extruder_filament) {
+                                imgui.filament_group(get_filament_display_type(extruder_filament), extruder_filament.hex_color.c_str(), extruder_filament.filament_id,
+                                                     filament_group_item_align_width);
+                                if (index % 4 != 0) { ImGui::SameLine(0, spacing); }
+                                index++;
+                            }
+                            ImGui::EndChild();
+                        }
+                        ImGui::PopStyleColor(1);
+                        ImGui::PopStyleVar(1);
+                        ImGui::Dummy({ window_padding, window_padding });
+                        imgui.text_wrapped(from_u8(_u8L("Please place filaments on the printer based on grouping result.")), ImGui::GetContentRegionAvail().x);
                     }
-                    ImGui::PopStyleColor(1);
-                    ImGui::PopStyleVar(1);
-                    ImGui::Dummy({ window_padding, window_padding });
-                    imgui.text_wrapped(from_u8(_u8L("Please place filaments on the printer based on grouping result.")), ImGui::GetContentRegionAvail().x);
                     ImGui::Dummy({ window_padding, window_padding });
                     {
                         ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -2830,6 +2896,8 @@ namespace Slic3r
                         ImGui::PopStyleColor(1);
                     }
                     else if (any_less_to_single_ext) {
+                        ImVec4 color = is_show_left_right_result ? ImVec4(0.95f, 0.95f, 0.95f, 1.0f) : ImVec4(0.42f, 0.42f, 0.42f, 1.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Text, color);
                         wxString tip;
                         if (delta_weight_to_single_ext >= 0 && delta_change_to_single_ext >= 0)
                             tip = from_u8((boost::format(_u8L("Save %1%g filament and %2% changes compared to a printer with one nozzle."))
@@ -2844,6 +2912,7 @@ namespace Slic3r
                                 % number_format(std::abs(delta_weight_to_single_ext))
                                 % delta_change_to_single_ext).str());
                         imgui.text_wrapped(tip, parent_width);
+                        ImGui::PopStyleColor(1);
                     }
                     ImGui::Dummy({ window_padding, window_padding });
                     if (!is_optimal_group) {
@@ -2887,6 +2956,20 @@ namespace Slic3r
 
             void BaseRenderer::on_visibility_changed()
             {
+                wxGetApp().plater()->get_current_canvas3D()->set_as_dirty();
+            }
+
+            void BaseRenderer::apply_view_type_selection(int view_type_sel, EViewType type)
+            {
+                m_view_type_sel = view_type_sel;
+                if (!is_helio_option()) {
+                    m_last_non_helio_option_item = view_type_sel;
+                    record_gcodeviewer_option_item();
+                }
+                set_view_type(type);
+                reset_visible(type);
+                refresh_render_paths();
+                update_moves_slider();
                 wxGetApp().plater()->get_current_canvas3D()->set_as_dirty();
             }
 
@@ -3047,6 +3130,7 @@ namespace Slic3r
                 view_type_items.push_back(EViewType::VolumetricRate);
                 view_type_items.push_back(EViewType::LayerTime);
                 view_type_items.push_back(EViewType::FanSpeed);
+                view_type_items.push_back(EViewType::AdditionalFanSpeed);
                 view_type_items.push_back(EViewType::Temperature);
                 for (int i = 0; i < view_type_items.size(); i++) {
                     if (view_type_items[i] == EViewType::FilamentId) {
@@ -3515,6 +3599,7 @@ namespace Slic3r
                 std::string flow = ImGui::ColorMarkerStart + _u8L("Flow: ") + ImGui::ColorMarkerEnd;
                 std::string layer_time = ImGui::ColorMarkerStart + _u8L("Layer Time: ") + ImGui::ColorMarkerEnd;
                 std::string fanspeed = ImGui::ColorMarkerStart + _u8L("Fan Speed: ") + ImGui::ColorMarkerEnd;
+                std::string additional_fanspeed = ImGui::ColorMarkerStart + _u8L("AUX Fan Speed: ") + ImGui::ColorMarkerEnd;
                 std::string temperature = ImGui::ColorMarkerStart + _u8L("Temperature: ") + ImGui::ColorMarkerEnd;
                 std::string    thermal_index = ImGui::ColorMarkerStart + _u8L("Thermal Index") + ImGui::ColorMarkerEnd;
                 // helio
@@ -3589,6 +3674,13 @@ namespace Slic3r
                     case EViewType::FanSpeed: {
                         ImGui::SameLine(window_padding + item_size + item_spacing);
                         sprintf(buf, "%s%.0f", fanspeed.c_str(), m_curr_move.fan_speed);
+                        ImGui::PushItemWidth(item_size);
+                        imgui.text(buf);
+                        break;
+                    }
+                    case EViewType::AdditionalFanSpeed: {
+                        ImGui::SameLine(window_padding + item_size + item_spacing);
+                        sprintf(buf, "%s%.0f", additional_fanspeed.c_str(), m_curr_move.additional_fan_speed);
                         ImGui::PushItemWidth(item_size);
                         imgui.text(buf);
                         break;

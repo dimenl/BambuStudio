@@ -154,6 +154,9 @@ public:
 	// Apply config over the print. Returns false, if the new config values caused any of the already
 	// processed steps to be invalidated, therefore the task will need to be restarted.
     PrintBase::ApplyStatus apply(const Model &model, const DynamicPrintConfig &config);
+	// If set before the current slicing run reaches finalize_gcode(), external post-processing scripts are not run (user chose "Do not execute" in Plater). Cleared when consumed or when stop() runs.
+	// Guarded by m_mutex so the background slicing thread (finalize_gcode) and the UI thread (reslice) don't race on this flag.
+	void set_skip_post_process_once(bool skip);
 	// After calling the apply() function, set_task() may be called to limit the task to be processed by process().
 	// This is useful for calculating SLA supports for a single object only.
 	void 		set_task(const PrintBase::TaskParams &params);
@@ -267,10 +270,16 @@ private:
 	// Thread, on which the background processing is executed. The thread will always be present
 	// and ready to execute the slicing process.
 	boost::thread		 		m_thread;
+	// Threads orphaned by force-cancel (stop() timeout). They continue running until
+	// their computation finishes, then exit silently. Detached in the destructor.
+	std::vector<boost::thread>	m_orphaned_threads;
 	// Mutex and condition variable to synchronize m_thread with the UI thread.
 	std::mutex 		 			m_mutex;
 	std::condition_variable		m_condition;
 	State 						m_state = STATE_INITIAL;
+	// Incremented on force-cancel (stop() timeout). The background thread checks this
+	// after completing work; if it changed, the thread skips state/event updates.
+	unsigned int				m_task_generation = 0;
 
 	// For executing tasks from the background thread on UI thread synchronously (waiting for result) using wxWidgets CallAfter().
 	// When the background proces is canceled, the UITask has to be invalidated as well, so that it will not be
@@ -293,6 +302,7 @@ private:
 	GUI::PartPlate* m_current_plate;
 	PrinterTechnology m_printer_tech = ptUnknown;
 	bool m_internal_cancelled = false;
+	bool m_skip_post_process_once = false;
 
     PrintState<BackgroundSlicingProcessStep, bspsCount>   	m_step_state;
 	bool                set_step_started(BackgroundSlicingProcessStep step);

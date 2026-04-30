@@ -74,6 +74,7 @@
 #define BBL_JSON_KEY_DEFAULT_MATERIALS          "default_materials"
 #define BBL_JSON_KEY_NOT_SUPPORT_BED_TYPE       "not_support_bed_type"
 #define BBL_JSON_KEY_MODEL_ID                   "model_id"
+#define BBL_JSON_KEY_SUPPORT_SIDE_PANEL_FAN     "support_side_panel_fan"
 
 //BBL: json path
 
@@ -139,6 +140,7 @@ public:
         std::string                 middle_texture_rect;
         std::string                 right_icon_offset_bed;
         std::string                 hotend_model;
+        std::string                 support_side_panel_fan{ "true" };
         PrinterVariant*       variant(const std::string &name) {
             for (auto &v : this->variants)
                 if (v.name == name)
@@ -283,6 +285,9 @@ public:
 
     // Return a label of this preset, consisting of a name and a "(modified)" suffix, if this preset is dirty.
     std::string         label(bool no_alias) const;
+
+    // Return a short display name: alias (or name before '@') with vendor prefix stripped.
+    std::string         display_name() const;
 
     // Set the is_dirty flag if the provided config is different from the active one.
     void                set_dirty(const DynamicPrintConfig &config) { this->is_dirty = ! this->config.diff(config).empty(); }
@@ -826,6 +831,7 @@ public:
 
     const Preset*   find_system_preset_by_model_and_variant(const std::string &model_id, const std::string &variant) const;
     const Preset*   find_custom_preset_by_model_and_variant(const std::string &model_id, const std::string &variant) const;
+    std::vector<const Preset*> find_all_presets_by_model(const std::string &model_id, bool system_only = true) const;
 
     bool            only_default_printers() const;
 private:

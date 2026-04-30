@@ -31,6 +31,13 @@ doc/
 test.js
 /.cache/
 .clangd
+dep_win_new
+compile_commands.json
+.jira/
+.claude/settings.local.json
+**/node_modules/
+.worktrees/
+
 *.gcode
 Cargo.lock
 base64_input.txt

@@ -113,7 +113,7 @@ PrintBase::ApplyStatus PrintObject::set_instances(PrintInstances &&instances)
     	[](const PrintInstance& lhs, const PrintInstance& rhs) { return lhs.model_instance == rhs.model_instance && lhs.shift == rhs.shift; });
     if (! equal) {
         status = PrintBase::APPLY_STATUS_CHANGED;
-        if (m_print->invalidate_steps({ psSkirtBrim, psGCodeExport }) ||
+        if (m_print->invalidate_steps({psWipeTower,psSkirtBrim, psGCodeExport}) ||
             (! equal_length && m_print->invalidate_step(psWipeTower)))
             status = PrintBase::APPLY_STATUS_INVALIDATED;
         m_instances = std::move(instances);
@@ -1253,6 +1253,7 @@ bool PrintObject::invalidate_state_by_config_options(
         } else if (
                opt_key == "top_surface_pattern"
             || opt_key == "top_surface_density"
+            || opt_key == "monotonic_travel_into_wall"
             || opt_key == "bottom_surface_pattern"
             || opt_key == "bottom_surface_density"
             || opt_key == "internal_solid_infill_pattern"
@@ -1297,6 +1298,12 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "fuzzy_skin"
             || opt_key == "fuzzy_skin_thickness"
             || opt_key == "fuzzy_skin_point_distance"
+            || opt_key == "fuzzy_skin_first_layer"
+            || opt_key == "fuzzy_skin_noise_type"
+            || opt_key == "fuzzy_skin_scale"
+            || opt_key == "fuzzy_skin_octaves"
+            || opt_key == "fuzzy_skin_persistence"
+            || opt_key == "fuzzy_skin_mode"
             || opt_key == "detect_overhang_wall"
             //BBS
             || opt_key == "enable_overhang_speed"
@@ -2141,10 +2148,11 @@ void PrintObject::discover_shell_for_perimeters()
                     ExPolygons old_internal = to_expolygons(lower_layerm->fill_surfaces.filter_by_type(stInternal));
                     ExPolygons old_internal_void = to_expolygons(lower_layerm->fill_surfaces.filter_by_type(stInternalVoid));
                     ExPolygons old_internal_solid = to_expolygons(lower_layerm->fill_surfaces.filter_by_type(stInternalSolid));
+                    ExPolygons bottom_area        = to_expolygons(lower_layerm->fill_surfaces.filter_by_type(stBottom));
 
                     lower_layerm->fill_surfaces.remove_types({ stInternal,stInternalVoid,stInternalSolid });
 
-                    ExPolygons new_internal_solid = union_ex(old_internal_solid, new_perimeter_solid);
+                    ExPolygons new_internal_solid = diff_ex(union_ex(old_internal_solid, new_perimeter_solid), bottom_area);
                     ExPolygons new_internal = diff_ex(old_internal, new_perimeter_solid);
                     ExPolygons new_internal_void = diff_ex(old_internal_void, new_perimeter_solid);
                     lower_layerm->fill_surfaces.append(new_internal, stInternal);
@@ -3141,8 +3149,10 @@ PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &defau
         config.sparse_infill_density.value = 0;
     else
         config.sparse_infill_density.value = std::min(config.sparse_infill_density.value, 100.);
-    if (config.fuzzy_skin.value != FuzzySkinType::None && (config.fuzzy_skin_point_distance.value < 0.01 || config.fuzzy_skin_thickness.value < 0.001))
-        config.fuzzy_skin.value = FuzzySkinType::None;
+    // Very small fuzzy_skin_point_distance value may cause infinite recursion, and a near-zero thickness doesn't generate anything anyway.
+    // Check here even if `fuzzy_skin == None` because that setting allows painting and the type may get reset later (but `Disabled_fuzzy` will not).
+    if (config.fuzzy_skin.value != FuzzySkinType::Disabled_fuzzy && (config.fuzzy_skin_point_distance.value < 0.01 || config.fuzzy_skin_thickness.value < 0.001))
+        config.fuzzy_skin.value = FuzzySkinType::Disabled_fuzzy;
     return config;
 }
 
@@ -3233,9 +3243,10 @@ std::vector<unsigned int> PrintObject::object_extruders() const
     return extruders;
 }
 
-bool PrintObject::update_layer_height_profile(const ModelObject &model_object, const SlicingParameters &slicing_parameters, std::vector<coordf_t> &layer_height_profile)
+bool PrintObject::update_layer_height_profile(const ModelObject &model_object, const SlicingParameters &slicing_parameters, std::vector<coordf_t> &layer_height_profile, bool &out_nozzle_range_reset)
 {
     bool updated = false;
+    out_nozzle_range_reset = false;
 
     if (layer_height_profile.empty()) {
         // use the constructor because the assignement is crashing on ASAN OsX
@@ -3251,6 +3262,18 @@ bool PrintObject::update_layer_height_profile(const ModelObject &model_object, c
             // Last entry must be at the top of the object.
             std::abs(layer_height_profile[layer_height_profile.size() - 2] - slicing_parameters.object_print_z_max + slicing_parameters.object_print_z_min) > 1e-3))
         layer_height_profile.clear();
+
+    // Verify that all layer height values are within the allowed range for the current nozzle.
+    if (!layer_height_profile.empty()) {
+        for (size_t i = 1; i < layer_height_profile.size(); i += 2) {
+            if (layer_height_profile[i] < slicing_parameters.min_layer_height - EPSILON ||
+                layer_height_profile[i] > slicing_parameters.max_layer_height + EPSILON) {
+                out_nozzle_range_reset = true;
+                layer_height_profile.clear();
+                break;
+            }
+        }
+    }
 
     bool not_match_flag = !slicing_parameters.has_raft(); // if there is raft layer_height_profile[1] could also be adaptive
     not_match_flag &= !layer_height_profile.empty() && (layer_height_profile[1] != slicing_parameters.first_object_layer_height);

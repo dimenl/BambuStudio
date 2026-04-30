@@ -107,7 +107,7 @@ protected:
     wxPanel* m_part_failed_panel;
     wxPanel*    m_grid_panel{ nullptr };
     wxPanel*    m_multi_extruder_grid_panel{ nullptr };
-    std::map<int, PACalibResult> m_calib_results;// map<tray_id, PACalibResult>
+    std::vector<PACalibResult> m_calib_results;
     std::vector<PACalibResult> m_history_results;
     bool m_is_all_failed{ true };
     MachineObject* m_obj{ nullptr };
@@ -216,7 +216,7 @@ public:
     void create_page(wxWindow* parent);
 
     // sync widget value from cali flow rate result
-    void sync_cali_result(const std::vector<FlowRatioCalibResult>& cali_result);
+    void sync_cali_result(MachineObject* obj, const std::vector<FlowRatioCalibResult>& cali_result);
     void save_to_result_from_widgets(wxWindow* window, bool* out_is_valid, wxString* out_msg);
     bool get_result(std::vector<std::pair<wxString, float>>& out_results);
     bool is_all_failed() { return m_is_all_failed; }
