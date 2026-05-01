@@ -158,6 +158,7 @@ fn main() {
         "clipper",
         "clipper2",
         "glu-libtess",
+        "libnoise",
         "libslic3r", // contains liblibslic3r_cgal.a
         "mcut",
         "miniz",
@@ -195,6 +196,7 @@ fn main() {
         "Clipper2",
         "nowide",
         "glu-libtess",
+        "libnoise_static",
         "mcut",
         // --- Core Dependencies ---
         "tbb",

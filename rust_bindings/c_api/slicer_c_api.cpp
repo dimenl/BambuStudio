@@ -246,10 +246,10 @@ static std::string generate_stats_json(
     j["total_extruded_volume"] = total_vol;
     j["total_weight"] = total_weight;
     j["total_cost"] = total_cost;
-    j["total_toolchanges"] = stats.total_extruder_changes;
+    j["total_toolchanges"] = stats.total_filament_changes;
     j["total_filament_changes"] = stats.total_filament_changes;
-    j["total_extruder_changes"] = stats.total_extruder_changes;
-    j["total_nozzle_changes"] = stats.total_nozzle_changes;
+    j["total_extruder_changes"] = stats.total_filament_changes;
+    j["total_nozzle_changes"] = stats.total_flush_filament_changes;
 
     json filament_stats = json::object();
     for (const auto& pair : filament_usage) {

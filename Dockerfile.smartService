@@ -13,7 +13,7 @@ COPY . /BambuStudio/
 
 # Install system dependencies (from linux.d/debian)
 RUN apt-get update && apt-get install -y \
-    autoconf build-essential cmake curl extra-cmake-modules file git ninja-build \
+    autoconf build-essential cmake curl extra-cmake-modules file git nasm ninja-build \
     binutils-gold \
     libboost-dev libboost-regex-dev libboost-filesystem-dev libboost-thread-dev \
     libboost-log-dev libboost-locale-dev libboost-iostreams-dev libcurl4-openssl-dev \
@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y \
     wget eglexternalplatform-dev wayland-protocols libcairo2-dev libsecret-1-dev \
     libsoup2.4-dev libwebkit2gtk-4.1-dev gstreamer1.0-plugins-bad gstreamer1.0-libav \
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good \
-    libclang-dev llvm-dev clang \
+    libclang-dev llvm-dev clang libtbb-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set LIBCLANG_PATH for bindgen (Debian bookworm uses LLVM 14)
@@ -32,9 +32,13 @@ ENV LIBCLANG_PATH="/usr/lib/llvm-14/lib"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Build dependencies (skip RAM check, limit to 1 core to reduce memory)
-# Only build essential deps, skip GUI-related dependencies
-RUN ./BuildLinux.sh -d -r -1
+# Build dependencies with a true 1-core limit to avoid memory spikes.
+# BuildLinux.sh's `-1` flag is overridden unless `-f` is also provided.
+RUN CMAKE_BUILD_PARALLEL_LEVEL=1 ./BuildLinux.sh -d -r -1 -f || \
+    (status=$?; \
+     printf '\nDependency build failed with exit code %s\n' "$status"; \
+     find deps/build -type f \( -name "*.log" -o -path "*/CMakeFiles/CMake*.log" \) -print -exec sh -c 'printf "\n===== %s =====\n" "$1"; tail -n 200 "$1"' _ {} \;; \
+     exit "$status")
 
 # Build ONLY libslic3r (not the full BambuStudio GUI)
 # This dramatically reduces build time and memory usage
@@ -62,7 +66,9 @@ WORKDIR /BambuStudio/smart_slicer_service
 # Keep container alive for debugging
 # CMD ["tail", "-f", "/dev/null"]
 
-RUN cargo build --release
+RUN cargo rustc --release --bin smart-slicer-service -- \
+        -C link-arg=/usr/lib/x86_64-linux-gnu/libtbb.so \
+        -C link-arg=/usr/lib/x86_64-linux-gnu/libtbbmalloc.so
 # Strip symbols to reduce binary size
 RUN strip target/release/smart-slicer-service
 # Verify binary was built
