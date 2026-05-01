@@ -85,6 +85,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # curl \
     libstdc++6 \
+    libtbb12 \
+    libtbbmalloc2 \
     zlib1g \
     libfontconfig1 \
     libfreetype6 \
